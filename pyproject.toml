@@ -7,7 +7,7 @@ name = "pdf-to-md"
 version = "2.1.0"
 description = "Conversor de PDF para Markdown (Docling ou pypdfium2)."
 requires-python = ">=3.10"
-readme = "PDF_TO_MD.md"
+readme = "README.md"
 
 [project.optional-dependencies]
 # Motor leve: so extrai a camada de texto nativa do PDF (sem OCR/tabelas).
