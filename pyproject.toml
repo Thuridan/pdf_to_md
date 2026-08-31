@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pdf-to-md"
+version = "2.1.0"
+description = "Conversor de PDF para Markdown (Docling ou pypdfium2)."
+requires-python = ">=3.10"
+readme = "PDF_TO_MD.md"
+
+[project.optional-dependencies]
+# Motor leve: so extrai a camada de texto nativa do PDF (sem OCR/tabelas).
+simples = ["pypdfium2>=4,<6"]
+# Motor de alta fidelidade: layout + TableFormer + OCR.
+# Faixa de versao testada nesta maquina; docling evolui rapido, por isso um
+# teto de major version em vez de fixar um unico patch.
+docling = ["docling[rapidocr]>=2.100,<3"]
+# Dependencias so para rodar a suite de testes (gera PDFs sinteticos).
+dev = ["fpdf2>=2.7,<3"]
+
+[project.scripts]
+pdf-to-md = "pdf_to_md:main"
+
+[tool.setuptools]
+py-modules = ["pdf_to_md"]
