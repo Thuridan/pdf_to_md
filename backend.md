@@ -1,0 +1,296 @@
+# Backend — design da API web
+
+Design detalhado de `backend/`: a API FastAPI construída sobre
+`pdf_to_md.py`. Para como essa camada se encaixa no sistema como um todo, ver
+[`architecture.md`](architecture.md); para o motor de conversão em si, ver
+[`code.md`](code.md).
+
+## Estrutura de pastas
+
+```
+backend/
+├── __init__.py
+├── src/
+│   ├── app.py                  # cria o FastAPI, lifespan, monta rotas + estático
+│   ├── routes/
+│   │   └── api.py              # camada HTTP: valida requests, chama services/
+│   └── services/
+│       ├── jobs.py             # Job, JobStore, fila, worker, progresso, limpeza
+│       └── motor_pool.py       # instância única do motor por processo
+└── tests/
+    ├── test_app.py             # testes via TestClient (rotas)
+    ├── test_jobs.py            # testes unitários do serviço de jobs
+    └── test_motor_pool.py      # testes do singleton de motor
+```
+
+Deliberadamente **não existe** `models/` (sem banco — estado de jobs vive em
+memória, ver [`architecture.md`](architecture.md#persistência-ou-a-ausência-dela))
+nem `middlewares/` (nenhum necessário ainda: sem auth, sem CORS customizado).
+`routes/api.py` é o "controller"; `services/` concentra toda a lógica de
+negócio e reaproveita as mesmas funções que a CLI usa
+(`converter_arquivo`, `selecionar_motor`, `contar_paginas`).
+
+## `app.py` — bootstrap da aplicação
+
+```python
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    motor_pool.inicializar()   # escolhe o motor UMA vez por processo
+    jobs.iniciar_worker()      # sobe a thread worker única
+    try:
+        yield
+    finally:
+        jobs.parar_worker()    # sinaliza fim + join com timeout
+
+app = FastAPI(title="pdf_to_md", version=pdf_to_md.__version__, lifespan=lifespan)
+app.include_router(router)
+app.mount("/", StaticFiles(directory=DIR_FRONTEND, html=True), name="static")
+```
+
+Duas decisões relevantes aqui:
+
+- **Ordem de registro importa.** `app.include_router(router)` roda antes do
+  `app.mount("/", ...)`. FastAPI resolve rotas na ordem em que foram
+  adicionadas, então `/api/*` sempre vence o mount estático — sem essa
+  ordem, o `StaticFiles` (que serve `index.html` para qualquer path por
+  causa de `html=True`) engoliria as chamadas de API. Isso é verificado
+  explicitamente por `test_mount_estatico_nao_esconde_as_rotas_de_api`.
+- **`motor_pool.inicializar()` não força carga eager dos modelos.** Ela só
+  decide *qual* motor usar (`selecionar_motor`); o Docling continua
+  carregando os modelos pesados sob demanda na primeira conversão real
+  (dentro de `MotorDocling._obter_converter`). Isso mantém o startup do
+  servidor rápido mesmo com o motor Docling selecionado.
+
+## Rotas (`routes/api.py`)
+
+| Método | Rota | Descrição | Códigos |
+|---|---|---|---|
+| `GET` | `/api/health` | Liveness check + versão do pacote. | `200` |
+| `GET` | `/api/motor` | Qual motor está ativo neste processo (`docling`/`simples`). | `200` |
+| `POST` | `/api/jobs` | Upload de um ou mais PDFs (`multipart/form-data`, campo `files`); enfileira cada um válido. | `200` (sempre — rejeições vêm no corpo) |
+| `GET` | `/api/jobs` | Lista todos os jobs com status/progresso estimado. | `200` |
+| `GET` | `/api/jobs/{id}` | Status de um job específico. | `200` / `404` |
+| `DELETE` | `/api/jobs/{id}` | Remove um job e seus arquivos em disco. | `200` / `404` / `409` (processando) |
+| `DELETE` | `/api/jobs` | Remove todos os jobs `concluido`/`erro` (e arquivos) — "Limpar finalizados". | `200` |
+| `GET` | `/api/jobs/{id}/download` | Baixa o `.md` de um job concluído. | `200` / `404` / `409` (não concluído) |
+| `GET` | `/api/download-zip?ids=` | Zip em memória com os `.md` dos concluídos (todos, ou filtrado por `ids` separados por vírgula). | `200` / `404` (nada para baixar) |
+
+### `POST /api/jobs` — contrato de upload
+
+```python
+async def criar_jobs(files: list[UploadFile] = File(...)) -> dict:
+    ...
+    return {"criados": [...], "rejeitados": [...]}
+```
+
+Cada arquivo é classificado por extensão (`pdf_to_md.SUFIXOS_PDF`), não por
+`Content-Type` — um upload malformado ou renomeado é pego pela extensão, não
+confiando no header enviado pelo cliente. Arquivos não-PDF vão para
+`rejeitados` com o motivo; o restante é gravado em disco e enfileirado. A
+resposta é sempre `200`: a rota nunca falha por causa de um arquivo ruim no
+meio de um lote misto (ver `test_lote_misto_separa_criados_de_rejeitados`).
+
+### Convenção de erros
+
+- **`404`** — recurso (job) não existe no `JobStore`.
+- **`409`** — recurso existe, mas está no estado errado para a operação
+  pedida (baixar um job ainda não concluído; remover um job em
+  processamento). O corpo do erro (`detail`) sempre inclui o estado atual
+  quando é útil para o cliente decidir o que fazer.
+
+Essas duas rotas (`baixar_job`, `remover_job`) seguem o mesmo padrão: buscar
+o job direto do `JobStore` na própria rota, checar o status ali, e só então
+delegar a operação de fato ao módulo `jobs`. Isso mantém a lógica de
+validação HTTP (o que vira 404 vs 409) na camada HTTP, e a lógica de efeito
+colateral (apagar arquivo, mover status) na camada de serviço.
+
+## `services/jobs.py` — registro e fila
+
+### O dataclass `Job`
+
+```python
+@dataclass
+class Job:
+    id: str
+    nome_original: str
+    caminho_pdf: Path
+    status: str = "na_fila"        # na_fila | processando | concluido | erro
+    criado_em: datetime = ...
+    mensagem_erro: str = ""
+    caminho_saida: Path | None = None
+    paginas_totais: int | None = None
+    tamanho_bytes: int = 0
+    iniciado_em: datetime | None = None
+    segundos: float = 0.0
+```
+
+`Job.to_dict()` é onde a **estimativa de progresso** é calculada, não em um
+campo armazenado — ela é derivada sob demanda a partir de `iniciado_em` e de
+uma constante global `_segundos_por_pagina` (ver abaixo), para que o valor
+retornado reflita o tempo decorrido no exato momento da requisição, não o
+tempo em que o worker atualizou o job pela última vez.
+
+### `JobStore` — thread safety
+
+```python
+class JobStore:
+    def __init__(self):
+        self._jobs: dict[str, Job] = {}
+        self._lock = threading.Lock()
+```
+
+Um dicionário simples protegido por `Lock`, sem TTL nem paginação — é
+adequado porque o volume esperado é "os jobs de uma sessão local", não
+milhares de registros concorrentes. É lido pelas rotas HTTP (thread pool do
+Starlette) e escrito pela thread worker; toda leitura/escrita passa pelo
+lock.
+
+### Fila e worker único
+
+```python
+_fila: queue.Queue[object] = queue.Queue()
+_worker_thread: threading.Thread | None = None
+
+def _loop():
+    while True:
+        item = _fila.get()
+        if item is _SENTINEL:
+            return
+        _processar(item)
+        _fila.task_done()
+```
+
+`enfileirar()` faz `queue.put()`, que nunca bloqueia — a rota `POST
+/api/jobs` responde imediatamente, e o processamento real acontece na
+thread `pdf-to-md-worker`. `iniciar_worker()`/`parar_worker()` são
+idempotentes e ligados ao `lifespan` do FastAPI: o shutdown do servidor
+sinaliza a thread com um sentinel e dá `join(timeout=5.0)`, evitando que o
+processo trave esperando um job que nunca vai terminar.
+
+Por que **uma** thread e não um pool: o gargalo é a instância compartilhada
+do motor Docling, não a orquestração em Python. Rodar duas conversões
+Docling "em paralelo" na mesma instância não é seguro (o `DocumentConverter`
+não foi desenhado para chamadas concorrentes) e, com instâncias separadas,
+duplicaria os modelos em memória sem ganho real de throughput — a mesma
+lógica por trás do `--jobs` ser ignorado para o motor `docling` na CLI (ver
+[`code.md`](code.md#paralelismo-de-lote)).
+
+### Estimativa de progresso (EMA)
+
+```python
+_SEGUNDOS_POR_PAGINA_PADRAO = 2.0
+_ALPHA_EMA = 0.3
+
+def _atualizar_estimativa(job):
+    observado = job.segundos / job.paginas_totais
+    _segundos_por_pagina = _ALPHA_EMA * observado + (1 - _ALPHA_EMA) * _segundos_por_pagina
+```
+
+Como o Docling não expõe um callback nativo por página, "página atual" de um
+job em andamento é uma projeção: `decorrido / segundos_por_pagina`, limitada
+ao total de páginas. `segundos_por_pagina` começa num palpite razoável (2s) e
+se ajusta por média móvel exponencial a cada job concluído — depois de
+alguns jobs, a estimativa converge para o throughput real da máquina
+naquele processo. A API sempre marca esse número com `"estimado": true`
+enquanto o job está em andamento, para a UI deixar claro que não é exato.
+
+### Posição na fila
+
+```python
+def _posicoes_na_fila() -> dict[str, int]:
+    na_fila = [j for j in _jobs_ordenados() if j.status == "na_fila"]
+    return {j.id: i + 1 for i, j in enumerate(na_fila)}
+```
+
+Recalculada a cada chamada de `listar_com_progresso()`/`obter_com_progresso()`
+a partir da ordem de criação — não é um campo armazenado no `Job`, então
+não pode ficar dessincronizada quando um job termina ou é removido no meio
+da fila.
+
+### Remoção e limpeza (`remover`, `limpar_finalizados`)
+
+```python
+def remover(job_id: str) -> None:
+    job = _store.obter(job_id)
+    if job is None:
+        return
+    _apagar_arquivo(job.caminho_pdf)
+    _apagar_arquivo(job.caminho_saida)
+    _store.remover(job_id)
+```
+
+`remover()` assume que o chamador (a rota) já validou existência e que o
+status não é `processando` — mesmo padrão de responsabilidade dividida que
+`baixar_job` já usava. `_apagar_arquivo` usa `Path.unlink(missing_ok=True)`,
+então remover um job cujo arquivo já sumiu do disco não é um erro.
+`limpar_finalizados()` itera os jobs em ordem de criação e remove todo
+`concluido`/`erro`, devolvendo a contagem — é o que a UI chama a partir do
+botão "Limpar finalizados". Sem essa dupla (rota + serviço), os arquivos em
+`backend/uploads/` cresceriam sem limite durante a vida do processo, já que
+nada mais os apaga.
+
+### `jobs_concluidos()` — seleção para download
+
+```python
+def jobs_concluidos(ids: list[str] | None = None) -> list[Job]:
+    candidatos = _jobs_ordenados()
+    if ids is not None:
+        permitidos = set(ids)
+        candidatos = [j for j in candidatos if j.id in permitidos]
+    return [j for j in candidatos if j.status == "concluido" and j.caminho_saida is not None]
+```
+
+Usada por `GET /api/download-zip`. Sem `ids`, pega todos os concluídos
+("Baixar tudo"); com `ids`, filtra — e ids inexistentes/pendentes são
+silenciosamente ignorados, porque decidir o que é válido baixar é
+responsabilidade de quem chamou (a UI só manda ids de jobs que ela mesma
+sabe que existem).
+
+## `services/motor_pool.py` — singleton do motor
+
+```python
+_motor: m.MotorBase | None = None
+_cfg: m.Config | None = None
+
+def inicializar(cfg: m.Config | None = None) -> m.MotorBase:
+    global _motor, _cfg
+    _cfg = cfg if cfg is not None else m.Config()
+    m.aplicar_ambiente(_cfg)
+    _motor = m.selecionar_motor(_cfg)
+    return _motor
+```
+
+Um módulo com estado global no lugar de uma classe/DI container — deliberado
+para um único processo de aplicação sem múltiplos "tenants" ou
+configurações concorrentes. `obter_motor()`/`obter_config()` levantam
+`RuntimeError` explícito se chamadas antes de `inicializar()`, para falhar
+alto (e cedo, nos testes) em vez de silenciosamente operar sobre `None`.
+
+Hoje `inicializar()` sempre usa `Config()` (todos os padrões: engine `auto`,
+OCR `rapidocr`, tabelas `accurate`) — não há endpoint para o cliente
+escolher engine/idioma/qualidade por job; é a mesma configuração para todos
+os jobs de um processo. Isso é consistente com o modelo de um motor
+compartilhado por processo: mudar `ocr_engine` ou `tables` por job exigiria
+reconstruir o `DocumentConverter` (caro) a cada chamada com config diferente.
+
+## Estratégia de testes
+
+- `test_app.py` sobe a aplicação real via `TestClient(app)` (contexto
+  `with`, o que dispara o `lifespan`). A classe `TestCriarJobsEndpoint`
+  força `motor_pool.inicializar` a sempre construir `Config(engine="simples")`
+  via `patch.object`, para que jobs enfileirados de verdade processem rápido
+  e sem depender de o Docling estar instalado na máquina de teste.
+- `TestDownloadEndpoints` e `TestRemoverJobsEndpoints` inserem `Job`s
+  **diretamente no `JobStore`** (sem passar pela fila/worker) porque o que
+  está sob teste é "servir/apagar o que já foi processado", não o
+  processamento em si — mais rápido e determinístico do que esperar um job
+  real terminar.
+- `test_jobs.py` testa o módulo de serviço isoladamente, com um
+  `_MotorDeTeste` (stub que registra ordem de chamadas, com atraso e falha
+  configuráveis) para verificar que dois jobs processam em série e na ordem
+  de chegada, sem tocar em Docling/pypdfium2 reais.
+- Todos os testes que tocam `JobStore`/`DIR_UPLOADS` trocam o estado global
+  em `setUp`/`tearDown` (`jobs._store = jobs.JobStore()`,
+  `jobs.DIR_UPLOADS = Path(tmp)`) e restauram no `tearDown` — necessário
+  porque esses são módulos com estado de processo, não instâncias isoladas
+  por teste.

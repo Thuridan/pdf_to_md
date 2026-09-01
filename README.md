@@ -21,6 +21,17 @@ local dos modelos.
 Uma única instância de `DocumentConverter` é reaproveitada em todo o lote — os modelos
 são carregados uma vez, não uma vez por arquivo.
 
+Documentação de design mais detalhada, por camada:
+
+| Documento | Conteúdo |
+|---|---|
+| [`architecture.md`](architecture.md) | Arquitetura do sistema como um todo: motor + backend + frontend. |
+| [`code.md`](code.md) | Design do motor de conversão/CLI (`pdf_to_md.py`). |
+| [`backend.md`](backend.md) | Design da API web (FastAPI, fila, worker). |
+| [`frontend.md`](frontend.md) | Design da UI web (HTML/CSS/JS, sem build step). |
+| [`dependencies.md`](dependencies.md) | Como as dependências são declaradas, versionadas e instaladas. |
+| [`library.md`](library.md) | O que cada biblioteca de terceiros faz e onde é usada. |
+
 ## Estrutura do projeto
 
 ```
@@ -36,7 +47,7 @@ pdf_to_md/
 │   │   └── app.py              # cria o FastAPI, monta rotas + frontend estático
 │   └── tests/
 ├── frontend/              # UI estática (HTML/CSS/JS puro, sem build) servida pelo backend
-├── Start.sh / Stop.sh / Restart.sh   # sobem/derrubam o backend (uvicorn) em background
+├── start.sh / stop.sh / restart.sh   # sobem/derrubam o backend (uvicorn) em background
 └── pyproject.toml
 ```
 
@@ -127,12 +138,12 @@ processo — mesma garantia da CLI para um lote).
 
 ```bash
 pip install ".[web]"   # além de ".[docling]" ou ".[simples]", conforme o motor desejado
-./Start.sh              # sobe em background (http://127.0.0.1:8000), aguarda /api/health
-./Restart.sh
-./Stop.sh
+./start.sh              # sobe em background (http://127.0.0.1:8000), aguarda /api/health
+./restart.sh
+./stop.sh
 ```
 
-`HOST`/`PORT` são configuráveis por variável de ambiente (`PORT=8001 ./Start.sh`). PID e
+`HOST`/`PORT` são configuráveis por variável de ambiente (`PORT=8001 ./start.sh`). PID e
 log ficam em `.run/` (gitignored). Para rodar em primeiro plano com reload:
 
 ```bash
