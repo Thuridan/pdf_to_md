@@ -5,3 +5,4 @@ __pycache__/
 LGPD.pdf
 LGPD_docling.md
 webapp/uploads/
+.run/
