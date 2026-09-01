@@ -1,0 +1,225 @@
+"use strict";
+
+const POLL_MS = 1500;
+const CHAVE_TEMA = "pdf-to-md:tema";
+
+const dropzone = document.getElementById("dropzone");
+const fileInput = document.getElementById("file-input");
+const jobsList = document.getElementById("jobs-list");
+const summaryEl = document.getElementById("queue-summary");
+const downloadAllBtn = document.getElementById("download-all");
+const motorPill = document.getElementById("motor-pill");
+const themeToggle = document.getElementById("theme-toggle");
+
+let jobsCache = [];
+
+// --- tema -------------------------------------------------------------
+function aplicarTema(tema) {
+  document.documentElement.dataset.theme = tema;
+  localStorage.setItem(CHAVE_TEMA, tema);
+  themeToggle.setAttribute("aria-pressed", String(tema === "dark"));
+}
+
+(function iniciarTema() {
+  const salvo = localStorage.getItem(CHAVE_TEMA);
+  const preferido =
+    salvo || (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+  aplicarTema(preferido);
+})();
+
+themeToggle.addEventListener("click", () => {
+  aplicarTema(document.documentElement.dataset.theme === "dark" ? "light" : "dark");
+});
+
+// --- utilitarios --------------------------------------------------------
+function escapeHtml(str) {
+  const mapa = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
+  return String(str).replace(/[&<>"']/g, (ch) => mapa[ch]);
+}
+
+function formatarTamanho(bytes) {
+  if (bytes == null) return "";
+  const unidades = ["B", "KB", "MB", "GB"];
+  let i = 0;
+  let valor = bytes;
+  while (valor >= 1024 && i < unidades.length - 1) {
+    valor /= 1024;
+    i += 1;
+  }
+  return `${valor.toFixed(i === 0 ? 0 : 1)} ${unidades[i]}`;
+}
+
+// --- motor ativo ----------------------------------------------------------
+async function carregarMotor() {
+  try {
+    const resp = await fetch("/api/motor");
+    if (!resp.ok) throw new Error(String(resp.status));
+    const dados = await resp.json();
+    motorPill.textContent = `Motor: ${dados.engine}`;
+  } catch (e) {
+    motorPill.textContent = "Motor: indisponível";
+  }
+}
+
+// --- upload ---------------------------------------------------------------
+async function enviarArquivos(files) {
+  if (!files.length) return;
+  const formData = new FormData();
+  for (const arquivo of files) formData.append("files", arquivo);
+
+  try {
+    const resp = await fetch("/api/jobs", { method: "POST", body: formData });
+    if (!resp.ok) throw new Error(`upload falhou (${resp.status})`);
+    const corpo = await resp.json();
+    if (corpo.rejeitados && corpo.rejeitados.length) {
+      const nomes = corpo.rejeitados.map((r) => r.nome_original).join(", ");
+      window.alert(`Ignorado (não é PDF): ${nomes}`);
+    }
+  } catch (e) {
+    window.alert(`Falha ao enviar arquivos: ${e.message}`);
+  } finally {
+    await atualizarFila();
+  }
+}
+
+["dragenter", "dragover"].forEach((evt) =>
+  dropzone.addEventListener(evt, (e) => {
+    e.preventDefault();
+    dropzone.classList.add("arrastando");
+  })
+);
+["dragleave", "drop"].forEach((evt) =>
+  dropzone.addEventListener(evt, (e) => {
+    e.preventDefault();
+    dropzone.classList.remove("arrastando");
+  })
+);
+dropzone.addEventListener("drop", (e) => {
+  const files = Array.from(e.dataTransfer?.files || []);
+  enviarArquivos(files);
+});
+dropzone.addEventListener("click", () => fileInput.click());
+dropzone.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" || e.key === " ") {
+    e.preventDefault();
+    fileInput.click();
+  }
+});
+fileInput.addEventListener("change", () => {
+  enviarArquivos(Array.from(fileInput.files || []));
+  fileInput.value = "";
+});
+
+downloadAllBtn.addEventListener("click", (e) => {
+  if (downloadAllBtn.hasAttribute("disabled")) e.preventDefault();
+});
+
+// --- icones (SVG inline, mesmo estilo em toda a lista) ---------------------
+const ICONE_PDF =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3h7l4 4v13a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"></path><path d="M14 3v4h4"></path></svg>';
+const ICONE_RELOGIO =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8.5"></circle><path d="M12 7.5V12l3 2"></path></svg>';
+const ICONE_CHECK =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8.5"></circle><path d="M8.5 12.3l2.4 2.4 4.6-5.2"></path></svg>';
+const ICONE_ALERTA =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8.5"></circle><path d="M12 8v4.5"></path><path d="M12 16h.01"></path></svg>';
+const ICONE_DOWNLOAD =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11"></path><path d="M8 12l4 4 4-4"></path><path d="M5 19.5h14"></path></svg>';
+
+// --- renderizacao da fila ---------------------------------------------------
+function metaLinha(job) {
+  const partes = [];
+  if (job.paginas_totais != null) {
+    partes.push(`${job.paginas_totais} página${job.paginas_totais === 1 ? "" : "s"}`);
+  }
+  if (job.tamanho_bytes) partes.push(formatarTamanho(job.tamanho_bytes));
+  return partes.join(" · ");
+}
+
+function blocoEstado(job, totalNaFila) {
+  if (job.status === "na_fila") {
+    return `
+      <div class="badge badge-amber">${ICONE_RELOGIO} Aguardando GPU</div>
+      <div class="meta-fina">posição ${job.posicao_na_fila} de ${totalNaFila} na fila</div>
+    `;
+  }
+  if (job.status === "processando") {
+    const temTotal = job.paginas_totais != null && job.paginas_totais > 0;
+    const pct = temTotal
+      ? Math.min(100, Math.round((job.pagina_estimada / job.paginas_totais) * 100))
+      : null;
+    const barra =
+      pct == null
+        ? `<div class="progresso progresso-indeterminado"><div class="progresso-fill"></div></div>`
+        : `<div class="progresso"><div class="progresso-fill" style="width:${pct}%"></div></div>`;
+    const detalhe = temTotal
+      ? `página ~${Math.min(job.paginas_totais, Math.round(job.pagina_estimada))}/${job.paginas_totais}`
+      : "processando";
+    return `
+      <div class="badge badge-blue"><span class="spinner"></span> Processando</div>
+      ${barra}
+      <div class="meta-fina">${detalhe}</div>
+    `;
+  }
+  if (job.status === "concluido") {
+    return `<div class="badge badge-green">${ICONE_CHECK} Concluído</div>`;
+  }
+  return `
+    <div class="badge badge-red">${ICONE_ALERTA} Erro</div>
+    <div class="meta-fina meta-erro" title="${escapeHtml(job.mensagem_erro || "")}">${escapeHtml(job.mensagem_erro || "Falha na conversão")}</div>
+  `;
+}
+
+function linhaJob(job, totalNaFila) {
+  const nome = escapeHtml(job.nome_original);
+  const acao =
+    job.status === "concluido"
+      ? `<a class="acao-btn" href="/api/jobs/${job.id}/download" title="Baixar ${nome}">${ICONE_DOWNLOAD}</a>`
+      : "";
+  return `
+    <div class="linha-job" data-status="${job.status}">
+      <div class="icone-arquivo">${ICONE_PDF}</div>
+      <div class="info-arquivo">
+        <div class="nome-arquivo">${nome}</div>
+        <div class="meta-fina">${metaLinha(job)}</div>
+      </div>
+      <div class="bloco-estado">${blocoEstado(job, totalNaFila)}</div>
+      <div class="acao-slot">${acao}</div>
+    </div>
+  `;
+}
+
+function renderizarFila() {
+  const contagens = { na_fila: 0, processando: 0, concluido: 0, erro: 0 };
+  for (const j of jobsCache) contagens[j.status] = (contagens[j.status] || 0) + 1;
+
+  summaryEl.textContent = jobsCache.length
+    ? `${contagens.processando} processando · ${contagens.na_fila} aguardando GPU · ${contagens.concluido} concluídos · ${contagens.erro} com erro`
+    : "nenhum arquivo enviado ainda";
+
+  if (contagens.concluido > 0) {
+    downloadAllBtn.removeAttribute("disabled");
+  } else {
+    downloadAllBtn.setAttribute("disabled", "");
+  }
+
+  jobsList.innerHTML = jobsCache.length
+    ? jobsCache.map((j) => linhaJob(j, contagens.na_fila)).join("")
+    : '<div class="fila-vazia">Nenhum PDF na fila ainda.</div>';
+}
+
+async function atualizarFila() {
+  try {
+    const resp = await fetch("/api/jobs");
+    if (!resp.ok) return;
+    const dados = await resp.json();
+    jobsCache = dados.jobs || [];
+    renderizarFila();
+  } catch (e) {
+    // poll seguinte corrige - nao interrompe o ciclo por uma falha isolada
+  }
+}
+
+carregarMotor();
+atualizarFila();
+setInterval(atualizarFila, POLL_MS);

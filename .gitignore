@@ -4,3 +4,4 @@ __pycache__/
 *.egg-info/
 LGPD.pdf
 LGPD_docling.md
+webapp/uploads/

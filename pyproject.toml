@@ -19,6 +19,8 @@ simples = ["pypdfium2>=4,<6"]
 docling = ["docling[rapidocr]>=2.100,<3"]
 # Dependencias so para rodar a suite de testes (gera PDFs sinteticos).
 dev = ["fpdf2>=2.7,<3"]
+# Aplicacao web (v3.0): API FastAPI por cima do pdf_to_md.py existente.
+web = ["fastapi>=0.115,<1", "uvicorn[standard]>=0.30,<1", "python-multipart>=0.0.9,<1"]
 
 [project.scripts]
 pdf-to-md = "pdf_to_md:main"

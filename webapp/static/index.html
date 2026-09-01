@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>pdf → md</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Sora:wght@600;700&family=Work+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <div class="pagina">
+
+    <header class="cabecalho">
+      <div>
+        <div class="wordmark"><span>pdf</span><span class="seta">&rarr;</span><span>md</span></div>
+        <div class="subtitulo">Conversor de PDF para Markdown &middot; v3.0</div>
+      </div>
+      <div class="cabecalho-acoes">
+        <div id="motor-pill" class="pill-motor">Motor: carregando...</div>
+        <button id="theme-toggle" class="toggle-tema" type="button" aria-pressed="false" aria-label="Alternar tema escuro">
+          <svg class="icone-sol" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round">
+            <circle cx="12" cy="12" r="4"></circle>
+            <path d="M12 3v2M12 19v2M4.2 4.2l1.4 1.4M18.4 18.4l1.4 1.4M3 12h2M19 12h2M4.2 19.8l1.4-1.4M18.4 5.6l1.4-1.4"></path>
+          </svg>
+          <svg class="icone-lua" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+            <path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5z"></path>
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <div id="dropzone" class="dropzone" tabindex="0" role="button" aria-label="Selecionar ou arrastar PDFs para converter">
+      <div class="dropzone-icone">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M7.5 17.5a4 4 0 0 1-.5-7.97 5.5 5.5 0 0 1 10.6-2 4.25 4.25 0 0 1-.6 8.47"></path>
+          <path d="M12 11v7M9 14l3-3 3 3"></path>
+        </svg>
+      </div>
+      <div class="dropzone-titulo">Arraste seus PDFs aqui</div>
+      <div class="dropzone-sub">ou <span class="destaque">clique para selecionar</span> &middot; varios arquivos de uma vez</div>
+      <div class="dropzone-nota">PDF &middot; um ou mais arquivos</div>
+      <input id="file-input" type="file" accept="application/pdf" multiple hidden>
+    </div>
+
+    <section class="fila-card">
+      <div class="fila-cabecalho">
+        <div>
+          <div class="fila-titulo">Fila de conversão</div>
+          <div id="queue-summary" class="fila-resumo">nenhum arquivo enviado ainda</div>
+        </div>
+        <a id="download-all" class="botao-baixar-tudo" href="/api/download-zip" disabled>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M4 8l8-4 8 4-8 4-8-4z"></path>
+            <path d="M4 8v8l8 4 8-4V8"></path>
+            <path d="M12 12v8"></path>
+          </svg>
+          Baixar tudo (.zip)
+        </a>
+      </div>
+      <div id="jobs-list" class="lista-jobs">
+        <div class="fila-vazia">Nenhum PDF na fila ainda.</div>
+      </div>
+    </section>
+
+    <div class="rodape-nota">fila processa 1 PDF por vez no motor Docling</div>
+
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>
