@@ -5,7 +5,7 @@ set -euo pipefail
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$DIR"
 
-HOST="${HOST:-127.0.0.1}"
+HOST="${HOST:-0.0.0.0}"
 PORT="${PORT:-8000}"
 RUN_DIR="$DIR/.run"
 PID_FILE="$RUN_DIR/uvicorn.pid"

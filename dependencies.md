@@ -109,7 +109,7 @@ Duas particularidades documentadas nesse arquivo:
 | `OMP_NUM_THREADS`, `MKL_NUM_THREADS`, `OPENBLAS_NUM_THREADS`, `NUMEXPR_NUM_THREADS` | `aplicar_ambiente()`, a partir de `Config.threads` | Limita threads de CPU usadas pelas libs de álgebra linear/tensores — só tem efeito se definidas **antes** do primeiro import de `torch`/OpenBLAS no processo. |
 | `TOKENIZERS_PARALLELISM` | `aplicar_ambiente()` (sempre `"false"`, via `setdefault`) | Evita o aviso de fork do tokenizers do Hugging Face. |
 | `HF_HUB_OFFLINE`, `TRANSFORMERS_OFFLINE` | `aplicar_ambiente()`, só se `Config.offline=True` | Bloqueia o Hugging Face Hub de checar atualizações de modelo (layout/TableFormer). Não afeta o RapidOCR, cujos modelos vêm do ModelScope. |
-| `HOST`, `PORT` | lidas por `start.sh`/`restart.sh` (não pelo Python) | Endereço/porta do uvicorn ao subir a aplicação web; padrão `127.0.0.1:8000`. |
+| `HOST`, `PORT` | lidas por `start.sh`/`restart.sh` (não pelo Python) | Endereço/porta do uvicorn ao subir a aplicação web; padrão `0.0.0.0:8000` (todas as interfaces). |
 
 ## Entry point
 

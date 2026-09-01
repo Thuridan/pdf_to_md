@@ -125,15 +125,16 @@ stop.sh      # mata o PID salvo, com fallback para SIGKILL se não parar
 restart.sh   # stop.sh seguido de start.sh
 ```
 
-- `HOST`/`PORT` configuráveis por variável de ambiente (padrão
-  `127.0.0.1:8000` — não exposto externamente por padrão).
+- `HOST`/`PORT` configuráveis por variável de ambiente (padrão `0.0.0.0:8000`
+  — escuta em todas as interfaces, incluindo a rede local; use
+  `HOST=127.0.0.1` para restringir a esta máquina).
 - PID e log ficam em `.run/` (gitignored) — não há supervisor de processo
   (systemd/supervisord); os scripts fazem esse papel de forma mínima.
 - `backend/uploads/` e `.run/` são gitignored: são estado de execução, não
   código-fonte.
 - Não há autenticação, HTTPS ou rate limiting na camada web — o design
-  assume execução local/confiável (`127.0.0.1`), não exposição direta à
-  internet.
+  assume execução em rede local/confiável, controlada pelo firewall do
+  sistema (`ufw`), não exposição direta à internet.
 
 ## Testes como parte da arquitetura
 

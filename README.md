@@ -138,12 +138,17 @@ processo — mesma garantia da CLI para um lote).
 
 ```bash
 pip install ".[web]"   # além de ".[docling]" ou ".[simples]", conforme o motor desejado
-./start.sh              # sobe em background (http://127.0.0.1:8000), aguarda /api/health
+./start.sh              # sobe em background (0.0.0.0:8000), aguarda /api/health
 ./restart.sh
 ./stop.sh
 ```
 
-`HOST`/`PORT` são configuráveis por variável de ambiente (`PORT=8001 ./start.sh`). PID e
+Por padrão o servidor escuta em todas as interfaces (`0.0.0.0`), então fica acessível
+por outras máquinas na mesma rede via o IP local desta máquina (ex.: `http://10.2.1.175:8000`),
+não só via `127.0.0.1`. Não há autenticação nem HTTPS — não exponha essa porta diretamente
+à internet; restrinja o acesso pelo firewall (`ufw`) a quem realmente precisa da rede local.
+`HOST`/`PORT` são configuráveis por variável de ambiente (`PORT=8001 ./start.sh`,
+`HOST=127.0.0.1 ./start.sh` para voltar a só loopback). PID e
 log ficam em `.run/` (gitignored). Para rodar em primeiro plano com reload:
 
 ```bash
