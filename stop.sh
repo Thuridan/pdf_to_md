@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Stops the pdf_to_md web app started by Start.sh.
+# Stops the pdf_to_md web app started by start.sh.
 set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
