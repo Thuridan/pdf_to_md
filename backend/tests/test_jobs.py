@@ -11,10 +11,10 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 import pdf_to_md as m  # noqa: E402
 
-from webapp import jobs, motor_pool  # noqa: E402
+from backend.src.services import jobs, motor_pool  # noqa: E402
 
 
 def _aguardar(condicao, timeout: float = 2.0) -> bool:

@@ -12,13 +12,13 @@ import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
-sys.path.insert(0, str(Path(__file__).parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 import pdf_to_md as m  # noqa: E402
 
 from fastapi.testclient import TestClient  # noqa: E402
 
-from webapp import jobs, motor_pool  # noqa: E402
-from webapp.main import app  # noqa: E402
+from backend.src.services import jobs, motor_pool  # noqa: E402
+from backend.src.app import app  # noqa: E402
 
 
 class TestApp(unittest.TestCase):

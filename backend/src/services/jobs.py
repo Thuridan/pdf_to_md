@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""webapp.jobs - Registro de jobs e fila de conversao (worker unico sequencial).
+"""backend.src.services.jobs - Registro de jobs e fila de conversao (worker unico sequencial).
 
 Reaproveita pdf_to_md.converter_arquivo() (checagens, escrita atomica) contra
 a UNICA instancia de motor de motor_pool - mesma garantia que a CLI ja da
@@ -19,9 +19,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import pdf_to_md as m
-from webapp import motor_pool
+from backend.src.services import motor_pool
 
-DIR_UPLOADS = Path(__file__).parent / "uploads"
+DIR_UPLOADS = Path(__file__).resolve().parents[2] / "uploads"
 
 STATUS_VALIDOS = {"na_fila", "processando", "concluido", "erro"}
 

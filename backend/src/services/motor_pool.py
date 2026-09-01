@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""webapp.motor_pool - Instancia unica do motor de conversao para o processo.
+"""backend.src.services.motor_pool - Instancia unica do motor de conversao para o processo.
 
 Chamado uma vez no startup do FastAPI (lifespan de webapp.main). O motor
 Docling e caro para carregar (layout model + TableFormer + OCR) - por isso

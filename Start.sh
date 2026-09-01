@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Starts the pdf_to_md web app (webapp.main:app) via uvicorn in the background.
+# Starts the pdf_to_md web app (backend.src.app:app) via uvicorn in the background.
 set -euo pipefail
 
 DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -24,7 +24,7 @@ if [ ! -x "$PYTHON" ]; then
     exit 1
 fi
 
-nohup "$PYTHON" -m uvicorn webapp.main:app --host "$HOST" --port "$PORT" \
+nohup "$PYTHON" -m uvicorn backend.src.app:app --host "$HOST" --port "$PORT" \
     > "$LOG_FILE" 2>&1 &
 echo $! > "$PID_FILE"
 disown

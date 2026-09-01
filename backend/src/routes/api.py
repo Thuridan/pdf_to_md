@@ -1,56 +1,34 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""webapp.main - App FastAPI da v3.0, construido sobre pdf_to_md.py.
-
-Uso rapido:
-    uvicorn webapp.main:app --reload
-    curl http://127.0.0.1:8000/api/health
-    curl http://127.0.0.1:8000/api/motor
-    curl http://127.0.0.1:8000/api/jobs
-    curl -OJ http://127.0.0.1:8000/api/jobs/{id}/download
-    curl -OJ http://127.0.0.1:8000/api/download-zip
-"""
+"""backend.src.routes.api - Camada HTTP (controller): valida requests e chama
+backend.src.services. Nenhuma logica de negocio mora aqui."""
 
 from __future__ import annotations
 
 import io
 import zipfile
-from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, File, HTTPException, UploadFile
+from fastapi import APIRouter, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
-from fastapi.staticfiles import StaticFiles
 
 import pdf_to_md
-from webapp import jobs, motor_pool
+from backend.src.services import jobs, motor_pool
+
+router = APIRouter()
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    # Seleciona o motor UMA vez para o processo inteiro (ver motor_pool).
-    motor_pool.inicializar()
-    jobs.iniciar_worker()
-    try:
-        yield
-    finally:
-        jobs.parar_worker()
-
-
-app = FastAPI(title="pdf_to_md", version=pdf_to_md.__version__, lifespan=lifespan)
-
-
-@app.get("/api/health")
+@router.get("/api/health")
 def health() -> dict:
     return {"status": "ok", "version": pdf_to_md.__version__}
 
 
-@app.get("/api/motor")
+@router.get("/api/motor")
 def motor() -> dict:
     return {"engine": motor_pool.obter_motor().nome}
 
 
-@app.post("/api/jobs")
+@router.post("/api/jobs")
 async def criar_jobs(files: list[UploadFile] = File(...)) -> dict:
     """Cria um job por PDF valido e enfileira para o worker processar.
 
@@ -71,12 +49,12 @@ async def criar_jobs(files: list[UploadFile] = File(...)) -> dict:
     return {"criados": criados, "rejeitados": rejeitados}
 
 
-@app.get("/api/jobs")
+@router.get("/api/jobs")
 def listar_jobs() -> dict:
     return {"jobs": jobs.listar_com_progresso()}
 
 
-@app.get("/api/jobs/{job_id}")
+@router.get("/api/jobs/{job_id}")
 def obter_job(job_id: str) -> dict:
     dados = jobs.obter_com_progresso(job_id)
     if dados is None:
@@ -84,7 +62,7 @@ def obter_job(job_id: str) -> dict:
     return dados
 
 
-@app.get("/api/jobs/{job_id}/download")
+@router.get("/api/jobs/{job_id}/download")
 def baixar_job(job_id: str) -> FileResponse:
     job = jobs.obter_store().obter(job_id)
     if job is None:
@@ -98,7 +76,7 @@ def baixar_job(job_id: str) -> FileResponse:
     return FileResponse(job.caminho_saida, media_type="text/markdown", filename=nome_saida)
 
 
-@app.get("/api/download-zip")
+@router.get("/api/download-zip")
 def baixar_zip(ids: str | None = None) -> StreamingResponse:
     """Zip em memoria com os .md dos jobs concluidos. Sem `ids`, pega todos
     os concluidos (botao "Baixar tudo"); com `ids` (separados por virgula),
@@ -124,8 +102,3 @@ def baixar_zip(ids: str | None = None) -> StreamingResponse:
         media_type="application/zip",
         headers={"Content-Disposition": 'attachment; filename="conversoes.zip"'},
     )
-
-
-# Montado por ultimo: rotas /api/* acima ja capturam esses caminhos primeiro,
-# entao o mount so serve o que sobra (index.html, app.js, app.css).
-app.mount("/", StaticFiles(directory=Path(__file__).parent / "static", html=True), name="static")
