@@ -76,6 +76,26 @@ def baixar_job(job_id: str) -> FileResponse:
     return FileResponse(job.caminho_saida, media_type="text/markdown", filename=nome_saida)
 
 
+@router.delete("/api/jobs/{job_id}")
+def remover_job(job_id: str) -> dict:
+    job = jobs.obter_store().obter(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="job nao encontrado")
+    if job.status == "processando":
+        raise HTTPException(
+            status_code=409, detail="job em processamento nao pode ser removido"
+        )
+    jobs.remover(job_id)
+    return {"removido": True}
+
+
+@router.delete("/api/jobs")
+def limpar_jobs_finalizados() -> dict:
+    """Remove todos os jobs 'concluido'/'erro' (e seus arquivos) - botao
+    'Limpar finalizados' da UI. Jobs 'na_fila'/'processando' nao sao afetados."""
+    return {"removidos": jobs.limpar_finalizados()}
+
+
 @router.get("/api/download-zip")
 def baixar_zip(ids: str | None = None) -> StreamingResponse:
     """Zip em memoria com os .md dos jobs concluidos. Sem `ids`, pega todos

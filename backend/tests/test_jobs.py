@@ -335,5 +335,56 @@ class TestJobsConcluidos(unittest.TestCase):
         self.assertEqual(jobs.jobs_concluidos(["a", "nao-existe"]), [])
 
 
+class TestRemover(unittest.TestCase):
+    def setUp(self):
+        self._tmp_ctx = tempfile.TemporaryDirectory()
+        self._tmp = Path(self._tmp_ctx.name)
+        self._store_original = jobs._store
+        jobs._store = jobs.JobStore()
+
+    def tearDown(self):
+        jobs._store = self._store_original
+        self._tmp_ctx.cleanup()
+
+    def _adicionar(self, job_id: str, status: str, *, com_saida: bool = False) -> jobs.Job:
+        caminho_pdf = self._tmp / f"{job_id}.pdf"
+        caminho_pdf.write_bytes(b"%PDF-1.4")
+        caminho_md = None
+        if com_saida:
+            caminho_md = self._tmp / f"{job_id}.md"
+            caminho_md.write_text("# ola\n", encoding="utf-8")
+        job = jobs.Job(
+            id=job_id, nome_original=f"{job_id}.pdf", caminho_pdf=caminho_pdf,
+            status=status, caminho_saida=caminho_md,
+        )
+        jobs.obter_store().adicionar(job)
+        return job
+
+    def test_remover_apaga_pdf_e_md_e_tira_do_store(self):
+        job = self._adicionar("j1", "concluido", com_saida=True)
+        jobs.remover("j1")
+        self.assertIsNone(jobs.obter_store().obter("j1"))
+        self.assertFalse(job.caminho_pdf.exists())
+        self.assertFalse(job.caminho_saida.exists())
+
+    def test_remover_id_inexistente_nao_leva_excecao(self):
+        jobs.remover("nao-existe")  # nao deve levantar
+
+    def test_remover_job_sem_saida_so_apaga_o_pdf(self):
+        job = self._adicionar("j1", "erro", com_saida=False)
+        jobs.remover("j1")
+        self.assertFalse(job.caminho_pdf.exists())
+
+    def test_limpar_finalizados_remove_concluido_e_erro_mas_preserva_o_resto(self):
+        self._adicionar("concluido", "concluido", com_saida=True)
+        self._adicionar("erro", "erro")
+        na_fila = self._adicionar("na_fila", "na_fila")
+        processando = self._adicionar("processando", "processando")
+        removidos = jobs.limpar_finalizados()
+        self.assertEqual(removidos, 2)
+        ids_restantes = {j.id for j in jobs.obter_store().listar()}
+        self.assertEqual(ids_restantes, {na_fila.id, processando.id})
+
+
 if __name__ == "__main__":
     unittest.main()

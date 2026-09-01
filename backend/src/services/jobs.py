@@ -95,6 +95,10 @@ class JobStore:
         with self._lock:
             return self._jobs.get(job_id)
 
+    def remover(self, job_id: str) -> None:
+        with self._lock:
+            self._jobs.pop(job_id, None)
+
     def listar(self) -> list[Job]:
         with self._lock:
             return list(self._jobs.values())
@@ -147,6 +151,35 @@ def jobs_concluidos(ids: list[str] | None = None) -> list[Job]:
         permitidos = set(ids)
         candidatos = [j for j in candidatos if j.id in permitidos]
     return [j for j in candidatos if j.status == "concluido" and j.caminho_saida is not None]
+
+
+def remover(job_id: str) -> None:
+    """Apaga os arquivos em disco (PDF de entrada e .md de saida, se existirem)
+    e remove o job do registro. Assume que o chamador ja validou existencia e
+    que o status nao e 'processando' - mesmo padrao de checagem que baixar_job
+    ja faz na rota antes de servir o arquivo."""
+    job = _store.obter(job_id)
+    if job is None:
+        return
+    _apagar_arquivo(job.caminho_pdf)
+    _apagar_arquivo(job.caminho_saida)
+    _store.remover(job_id)
+
+
+def limpar_finalizados() -> int:
+    """Remove todos os jobs 'concluido' ou 'erro' (e seus arquivos). Devolve
+    quantos foram removidos - usado pelo botao 'Limpar finalizados' da UI."""
+    removidos = 0
+    for job in _jobs_ordenados():
+        if job.status in ("concluido", "erro"):
+            remover(job.id)
+            removidos += 1
+    return removidos
+
+
+def _apagar_arquivo(caminho: Path | None) -> None:
+    if caminho is not None:
+        caminho.unlink(missing_ok=True)
 
 
 def _jobs_ordenados() -> list[Job]:

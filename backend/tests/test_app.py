@@ -226,5 +226,70 @@ class TestDownloadEndpoints(unittest.TestCase):
         self.assertEqual(len(set(zf.namelist())), 2)
 
 
+class TestRemoverJobsEndpoints(unittest.TestCase):
+    """DELETE /api/jobs/{id} e DELETE /api/jobs (limpar finalizados) - mesmo
+    padrao de insercao direta no store que TestDownloadEndpoints usa."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self._store_original = jobs._store
+        jobs._store = jobs.JobStore()
+
+    def tearDown(self):
+        jobs._store = self._store_original
+        self._tmp.cleanup()
+
+    def _job(self, job_id: str, status: str, *, com_saida: bool = False) -> jobs.Job:
+        caminho_pdf = Path(self._tmp.name) / f"{job_id}.pdf"
+        caminho_pdf.write_bytes(b"%PDF-1.4")
+        caminho_md = None
+        if com_saida:
+            caminho_md = Path(self._tmp.name) / f"{job_id}.md"
+            caminho_md.write_text("# ola\n", encoding="utf-8")
+        job = jobs.Job(
+            id=job_id,
+            nome_original=f"{job_id}.pdf",
+            caminho_pdf=caminho_pdf,
+            status=status,
+            caminho_saida=caminho_md,
+        )
+        jobs.obter_store().adicionar(job)
+        return job
+
+    def test_remove_job_concluido_e_apaga_arquivos_do_disco(self):
+        job = self._job("j1", "concluido", com_saida=True)
+        with TestClient(app) as cliente:
+            resposta = cliente.delete(f"/api/jobs/{job.id}")
+        self.assertEqual(resposta.status_code, 200)
+        self.assertEqual(resposta.json(), {"removido": True})
+        self.assertIsNone(jobs.obter_store().obter(job.id))
+        self.assertFalse(job.caminho_pdf.exists())
+        self.assertFalse(job.caminho_saida.exists())
+
+    def test_remove_job_inexistente_devolve_404(self):
+        with TestClient(app) as cliente:
+            resposta = cliente.delete("/api/jobs/nao-existe")
+        self.assertEqual(resposta.status_code, 404)
+
+    def test_remove_job_processando_devolve_409_e_mantem_o_job(self):
+        job = self._job("j1", "processando")
+        with TestClient(app) as cliente:
+            resposta = cliente.delete(f"/api/jobs/{job.id}")
+        self.assertEqual(resposta.status_code, 409)
+        self.assertIsNotNone(jobs.obter_store().obter(job.id))
+
+    def test_limpar_finalizados_remove_so_concluidos_e_com_erro(self):
+        self._job("j1", "concluido", com_saida=True)
+        self._job("j2", "erro")
+        na_fila = self._job("j3", "na_fila")
+        processando = self._job("j4", "processando")
+        with TestClient(app) as cliente:
+            resposta = cliente.delete("/api/jobs")
+        self.assertEqual(resposta.status_code, 200)
+        self.assertEqual(resposta.json(), {"removidos": 2})
+        ids_restantes = {j.id for j in jobs.obter_store().listar()}
+        self.assertEqual(ids_restantes, {na_fila.id, processando.id})
+
+
 if __name__ == "__main__":
     unittest.main()

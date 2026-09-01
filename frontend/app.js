@@ -8,6 +8,7 @@ const fileInput = document.getElementById("file-input");
 const jobsList = document.getElementById("jobs-list");
 const summaryEl = document.getElementById("queue-summary");
 const downloadAllBtn = document.getElementById("download-all");
+const clearDoneBtn = document.getElementById("clear-done");
 const motorPill = document.getElementById("motor-pill");
 const themeToggle = document.getElementById("theme-toggle");
 
@@ -114,6 +115,32 @@ downloadAllBtn.addEventListener("click", (e) => {
   if (downloadAllBtn.hasAttribute("disabled")) e.preventDefault();
 });
 
+// --- remocao de jobs --------------------------------------------------------
+async function removerJob(jobId) {
+  try {
+    const resp = await fetch(`/api/jobs/${jobId}`, { method: "DELETE" });
+    if (!resp.ok && resp.status !== 404) throw new Error(String(resp.status));
+  } catch (e) {
+    window.alert(`Falha ao remover: ${e.message}`);
+  } finally {
+    await atualizarFila();
+  }
+}
+
+clearDoneBtn.addEventListener("click", async () => {
+  clearDoneBtn.disabled = true;
+  try {
+    await fetch("/api/jobs", { method: "DELETE" });
+  } finally {
+    await atualizarFila();
+  }
+});
+
+jobsList.addEventListener("click", (e) => {
+  const botao = e.target.closest(".acao-remover");
+  if (botao) removerJob(botao.dataset.jobId);
+});
+
 // --- icones (SVG inline, mesmo estilo em toda a lista) ---------------------
 const ICONE_PDF =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3h7l4 4v13a1 1 0 0 1-1 1H7a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"></path><path d="M14 3v4h4"></path></svg>';
@@ -125,6 +152,8 @@ const ICONE_ALERTA =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8.5"></circle><path d="M12 8v4.5"></path><path d="M12 16h.01"></path></svg>';
 const ICONE_DOWNLOAD =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v11"></path><path d="M8 12l4 4 4-4"></path><path d="M5 19.5h14"></path></svg>';
+const ICONE_LIXEIRA =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 7h14"></path><path d="M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"></path><path d="M7 7l1 13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1l1-13"></path></svg>';
 
 // --- renderizacao da fila ---------------------------------------------------
 function metaLinha(job) {
@@ -172,10 +201,14 @@ function blocoEstado(job, totalNaFila) {
 
 function linhaJob(job, totalNaFila) {
   const nome = escapeHtml(job.nome_original);
-  const acao =
+  const baixar =
     job.status === "concluido"
       ? `<a class="acao-btn" href="/api/jobs/${job.id}/download" title="Baixar ${nome}">${ICONE_DOWNLOAD}</a>`
       : "";
+  const remover =
+    job.status === "processando"
+      ? ""
+      : `<button class="acao-btn acao-btn-perigo acao-remover" type="button" data-job-id="${job.id}" title="Remover ${nome}">${ICONE_LIXEIRA}</button>`;
   return `
     <div class="linha-job" data-status="${job.status}">
       <div class="icone-arquivo">${ICONE_PDF}</div>
@@ -184,7 +217,7 @@ function linhaJob(job, totalNaFila) {
         <div class="meta-fina">${metaLinha(job)}</div>
       </div>
       <div class="bloco-estado">${blocoEstado(job, totalNaFila)}</div>
-      <div class="acao-slot">${acao}</div>
+      <div class="acao-slot">${baixar}${remover}</div>
     </div>
   `;
 }
@@ -202,6 +235,7 @@ function renderizarFila() {
   } else {
     downloadAllBtn.setAttribute("disabled", "");
   }
+  clearDoneBtn.disabled = contagens.concluido + contagens.erro === 0;
 
   jobsList.innerHTML = jobsCache.length
     ? jobsCache.map((j) => linhaJob(j, contagens.na_fila)).join("")

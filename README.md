@@ -147,6 +147,8 @@ Principais rotas (ver `backend/src/routes/api.py`):
 | `GET /api/jobs` | Lista jobs com status/progresso estimado. |
 | `GET /api/jobs/{id}` | Status de um job específico. |
 | `GET /api/jobs/{id}/download` | Baixa o `.md` de um job concluído. |
+| `DELETE /api/jobs/{id}` | Remove um job (e seus arquivos em disco); `409` se ainda estiver processando. |
+| `DELETE /api/jobs` | Remove todos os jobs concluídos/com erro (e seus arquivos) — "Limpar finalizados". |
 | `GET /api/download-zip` | Zip com os `.md` de todos os jobs concluídos (ou de `?ids=`). |
 
 ## Aceleração por GPU
@@ -235,7 +237,7 @@ segue normalmente; a flag não altera o comportamento quando omitida.
 
 ```bash
 python -m unittest test_pdf_to_md -v   # 76 testes (motor de conversão / CLI)
-python -m pytest backend/               # suíte da aplicação web (44 testes)
+python -m pytest backend/               # suíte da aplicação web (52 testes)
 python verificar_api_docling.py <dir>  # confere a API do Docling estaticamente
 ```
 

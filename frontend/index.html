@@ -48,14 +48,17 @@
           <div class="fila-titulo">Fila de conversão</div>
           <div id="queue-summary" class="fila-resumo">nenhum arquivo enviado ainda</div>
         </div>
-        <a id="download-all" class="botao-baixar-tudo" href="/api/download-zip" disabled>
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M4 8l8-4 8 4-8 4-8-4z"></path>
-            <path d="M4 8v8l8 4 8-4V8"></path>
-            <path d="M12 12v8"></path>
-          </svg>
-          Baixar tudo (.zip)
-        </a>
+        <div class="fila-acoes">
+          <button id="clear-done" class="botao-limpar" type="button" disabled>Limpar finalizados</button>
+          <a id="download-all" class="botao-baixar-tudo" href="/api/download-zip" disabled>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M4 8l8-4 8 4-8 4-8-4z"></path>
+              <path d="M4 8v8l8 4 8-4V8"></path>
+              <path d="M12 12v8"></path>
+            </svg>
+            Baixar tudo (.zip)
+          </a>
+        </div>
       </div>
       <div id="jobs-list" class="lista-jobs">
         <div class="fila-vazia">Nenhum PDF na fila ainda.</div>
