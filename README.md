@@ -21,6 +21,31 @@ local dos modelos.
 Uma única instância de `DocumentConverter` é reaproveitada em todo o lote — os modelos
 são carregados uma vez, não uma vez por arquivo.
 
+## Estrutura do projeto
+
+```
+pdf_to_md/
+├── pdf_to_md.py           # motor de conversão + CLI (usado pela linha de comando e pelo backend)
+├── test_pdf_to_md.py
+├── backend/               # API web (FastAPI) por cima de pdf_to_md.py
+│   ├── src/
+│   │   ├── routes/api.py       # camada HTTP: valida requests, chama services/
+│   │   ├── services/
+│   │   │   ├── jobs.py         # fila de conversão (worker único sequencial)
+│   │   │   └── motor_pool.py   # instância única do motor por processo
+│   │   └── app.py              # cria o FastAPI, monta rotas + frontend estático
+│   └── tests/
+├── frontend/              # UI estática (HTML/CSS/JS puro, sem build) servida pelo backend
+├── Start.sh / Stop.sh / Restart.sh   # sobem/derrubam o backend (uvicorn) em background
+└── pyproject.toml
+```
+
+`backend/` e `frontend/` são deliberadamente enxutos: sem `models/` (não há banco de
+dados — o estado dos jobs vive em memória) nem `middlewares/` (nenhum ainda é
+necessário). `routes/api.py` faz o papel de "controller" e `services/` concentra a
+lógica de negócio, reaproveitando as mesmas funções (`converter_arquivo`,
+`selecionar_motor`) que a CLI usa.
+
 ## Instalação
 
 Forma recomendada, via `pyproject.toml` (também instala o comando `pdf-to-md`):
@@ -29,6 +54,7 @@ Forma recomendada, via `pyproject.toml` (também instala o comando `pdf-to-md`):
 pip install ".[docling]"   # motor de alta fidelidade (Docling + RapidOCR)
 pip install ".[simples]"   # so o motor leve (pypdfium2)
 pip install ".[dev]"       # dependencias da suite de testes (fpdf2)
+pip install ".[web]"       # FastAPI + uvicorn, para a aplicação web (ver seção abaixo)
 ```
 
 Forma alternativa, direta (sem clonar o `pyproject.toml`):
@@ -92,6 +118,36 @@ python pdf_to_md.py                                      # modo interativo
 ### Códigos de saída
 
 `0` sucesso · `1` alguma falha · `2` erro de uso · `130` interrompido.
+
+## Aplicação web
+
+Interface de upload com fila de conversão, progresso e download individual/em lote,
+construída sobre o mesmo `pdf_to_md.py` (um único motor Docling reaproveitado por
+processo — mesma garantia da CLI para um lote).
+
+```bash
+pip install ".[web]"   # além de ".[docling]" ou ".[simples]", conforme o motor desejado
+./Start.sh              # sobe em background (http://127.0.0.1:8000), aguarda /api/health
+./Restart.sh
+./Stop.sh
+```
+
+`HOST`/`PORT` são configuráveis por variável de ambiente (`PORT=8001 ./Start.sh`). PID e
+log ficam em `.run/` (gitignored). Para rodar em primeiro plano com reload:
+
+```bash
+uvicorn backend.src.app:app --reload
+```
+
+Principais rotas (ver `backend/src/routes/api.py`):
+
+| Rota | Descrição |
+|---|---|
+| `POST /api/jobs` | Upload de um ou mais PDFs; enfileira para conversão. |
+| `GET /api/jobs` | Lista jobs com status/progresso estimado. |
+| `GET /api/jobs/{id}` | Status de um job específico. |
+| `GET /api/jobs/{id}/download` | Baixa o `.md` de um job concluído. |
+| `GET /api/download-zip` | Zip com os `.md` de todos os jobs concluídos (ou de `?ids=`). |
 
 ## Aceleração por GPU
 
@@ -178,7 +234,8 @@ segue normalmente; a flag não altera o comportamento quando omitida.
 ## Testes
 
 ```bash
-python -m unittest test_pdf_to_md -v   # 76 testes
+python -m unittest test_pdf_to_md -v   # 76 testes (motor de conversão / CLI)
+python -m pytest backend/               # suíte da aplicação web (44 testes)
 python verificar_api_docling.py <dir>  # confere a API do Docling estaticamente
 ```
 
