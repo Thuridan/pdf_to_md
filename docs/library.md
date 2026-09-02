@@ -27,7 +27,7 @@ APIs consumidas diretamente:
 | `resultado.document.export_to_markdown()` | resultado de `.convert()` | Serialização final para a string Markdown retornada por `MotorDocling.converter()`. |
 
 Dois estágios internos do Docling têm caminhos de hardware independentes —
-documentado em detalhe no [README](README.md#aceleração-por-gpu): layout +
+documentado em detalhe no [README](../README.md#aceleração-por-gpu): layout +
 TableFormer rodam em PyTorch (`--device`), OCR roda via RapidOCR/ONNX
 Runtime (`--ocr-backend`). `python pdf_to_md.py --hardware`
 (`relatar_hardware()` em `pdf_to_md.py`) introspecciona `torch` e
@@ -91,7 +91,7 @@ de um servidor HTTP separado na frente.
 ### uvicorn (`uvicorn[standard]`)
 
 Servidor ASGI que efetivamente roda a aplicação FastAPI — invocado por
-`start.sh` (`python3 -m uvicorn backend.src.app:app --host ... --port ...`)
+`scripts/start.sh` (`python3 -m uvicorn backend.src.app:app --host ... --port ...`)
 e sugerido no README para desenvolvimento com `--reload`. O extra
 `[standard]` traz `uvloop` (event loop mais rápido) e `httptools` (parser
 HTTP em C) quando disponíveis na plataforma — sem eles, uvicorn cai para as

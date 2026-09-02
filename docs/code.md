@@ -292,7 +292,7 @@ closure/lambda) porque `ProcessPoolExecutor` precisa que a função passada a
 ## CLI (`argparse`)
 
 `construir_parser()` define todas as flags documentadas no
-[README](README.md#parâmetros). `main()` faz validação de uso (device
+[README](../README.md#parâmetros). `main()` faz validação de uso (device
 inválido, threads/timeout/max-pages/jobs fora de faixa) **antes** de
 construir `Config` e chamar `aplicar_ambiente` — erros de uso retornam
 `EXIT_USO` (2) sem nunca chegar a importar nada pesado. Se `-i`/`--input` for
