@@ -2,7 +2,7 @@
 # Stops the pdf_to_md web app started by start.sh.
 set -euo pipefail
 
-DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUN_DIR="$DIR/.run"
 PID_FILE="$RUN_DIR/uvicorn.pid"
 

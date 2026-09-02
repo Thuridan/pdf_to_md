@@ -2,7 +2,7 @@
 # Starts the pdf_to_md web app (backend.src.app:app) via uvicorn in the background.
 set -euo pipefail
 
-DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$DIR"
 
 HOST="${HOST:-0.0.0.0}"

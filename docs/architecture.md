@@ -120,9 +120,9 @@ durabilidade entre reinícios.
 ## Deploy e operação
 
 ```
-start.sh     # sobe uvicorn em background (nohup), grava PID em .run/, espera /api/health
-stop.sh      # mata o PID salvo, com fallback para SIGKILL se não parar
-restart.sh   # stop.sh seguido de start.sh
+scripts/start.sh     # sobe uvicorn em background (nohup), grava PID em .run/, espera /api/health
+scripts/stop.sh      # mata o PID salvo, com fallback para SIGKILL se não parar
+scripts/restart.sh   # stop.sh seguido de start.sh
 ```
 
 - `HOST`/`PORT` configuráveis por variável de ambiente (padrão `0.0.0.0:8000`

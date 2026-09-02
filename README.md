@@ -25,12 +25,12 @@ Documentação de design mais detalhada, por camada:
 
 | Documento | Conteúdo |
 |---|---|
-| [`architecture.md`](architecture.md) | Arquitetura do sistema como um todo: motor + backend + frontend. |
-| [`code.md`](code.md) | Design do motor de conversão/CLI (`pdf_to_md.py`). |
-| [`backend.md`](backend.md) | Design da API web (FastAPI, fila, worker). |
-| [`frontend.md`](frontend.md) | Design da UI web (HTML/CSS/JS, sem build step). |
-| [`dependencies.md`](dependencies.md) | Como as dependências são declaradas, versionadas e instaladas. |
-| [`library.md`](library.md) | O que cada biblioteca de terceiros faz e onde é usada. |
+| [`docs/architecture.md`](docs/architecture.md) | Arquitetura do sistema como um todo: motor + backend + frontend. |
+| [`docs/code.md`](docs/code.md) | Design do motor de conversão/CLI (`pdf_to_md.py`). |
+| [`docs/backend.md`](docs/backend.md) | Design da API web (FastAPI, fila, worker). |
+| [`docs/frontend.md`](docs/frontend.md) | Design da UI web (HTML/CSS/JS, sem build step). |
+| [`docs/dependencies.md`](docs/dependencies.md) | Como as dependências são declaradas, versionadas e instaladas. |
+| [`docs/library.md`](docs/library.md) | O que cada biblioteca de terceiros faz e onde é usada. |
 
 ## Estrutura do projeto
 
@@ -47,7 +47,8 @@ pdf_to_md/
 │   │   └── app.py              # cria o FastAPI, monta rotas + frontend estático
 │   └── tests/
 ├── frontend/              # UI estática (HTML/CSS/JS puro, sem build) servida pelo backend
-├── start.sh / stop.sh / restart.sh   # sobem/derrubam o backend (uvicorn) em background
+├── docs/                  # documentação de design (arquitetura, backend, frontend, código, dependências, libs)
+├── scripts/               # start.sh / stop.sh / restart.sh (sobem/derrubam o backend em background) + verificar_api_docling.py
 └── pyproject.toml
 ```
 
@@ -138,17 +139,17 @@ processo — mesma garantia da CLI para um lote).
 
 ```bash
 pip install ".[web]"   # além de ".[docling]" ou ".[simples]", conforme o motor desejado
-./start.sh              # sobe em background (0.0.0.0:8000), aguarda /api/health
-./restart.sh
-./stop.sh
+./scripts/start.sh              # sobe em background (0.0.0.0:8000), aguarda /api/health
+./scripts/restart.sh
+./scripts/stop.sh
 ```
 
 Por padrão o servidor escuta em todas as interfaces (`0.0.0.0`), então fica acessível
 por outras máquinas na mesma rede via o IP local desta máquina (ex.: `http://10.2.1.175:8000`),
 não só via `127.0.0.1`. Não há autenticação nem HTTPS — não exponha essa porta diretamente
 à internet; restrinja o acesso pelo firewall (`ufw`) a quem realmente precisa da rede local.
-`HOST`/`PORT` são configuráveis por variável de ambiente (`PORT=8001 ./start.sh`,
-`HOST=127.0.0.1 ./start.sh` para voltar a só loopback). PID e
+`HOST`/`PORT` são configuráveis por variável de ambiente (`PORT=8001 ./scripts/start.sh`,
+`HOST=127.0.0.1 ./scripts/start.sh` para voltar a só loopback). PID e
 log ficam em `.run/` (gitignored). Para rodar em primeiro plano com reload:
 
 ```bash
@@ -254,7 +255,7 @@ segue normalmente; a flag não altera o comportamento quando omitida.
 ```bash
 python -m unittest test_pdf_to_md -v   # 76 testes (motor de conversão / CLI)
 python -m pytest backend/               # suíte da aplicação web (52 testes)
-python verificar_api_docling.py <dir>  # confere a API do Docling estaticamente
+python scripts/verificar_api_docling.py <dir>  # confere a API do Docling estaticamente
 ```
 
 Duas falhas são esperadas *apenas* se o pacote `docling` real estiver
