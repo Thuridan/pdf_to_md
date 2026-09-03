@@ -193,6 +193,20 @@ repassado a `motor.converter()`).
 
 ### Medição: OCR recupera capturas de tela em documento nativo? (rodada 4, TAREFA-1)
 
+> **Errata (rodada 5, TAREFA-5):** a conclusão abaixo — "não se sustentou
+> para os dois exemplos que a motivaram" — estava **errada**. O OCR sempre
+> recuperou os cinco termos-alvo nas duas páginas; o texto ficava
+> pendurado como filhos do `PictureItem` na árvore do `DoclingDocument` e
+> nunca era exportado porque `export_to_markdown()` não recebia
+> `traverse_pictures=True` (parâmetro específico para esse caso, que o
+> projeto nunca passou). A medição de tempo/RSS abaixo continua correta e
+> válida — é a leitura de "conteúdo não recuperado" que estava errada,
+> por medir só o `.md` final sem esse parâmetro. Ver "Matriz de OCR:
+> idioma, escala e o achado real" (rodada 5, TAREFA-5) para a investigação
+> completa, e `README.md` para a correção equivalente no texto voltado ao
+> usuário. Texto original preservado abaixo, sem edição, para manter o
+> histórico da medição.
+
 A rodada 4 partiu da hipótese de que ligar OCR num documento nativo
 recuperaria o texto preso dentro de capturas de tela grandes (o
 `<!-- image -->` no Markdown vira um buraco de conteúdo silencioso). A
@@ -349,6 +363,84 @@ mudança maior (grava e lê um arquivo extra por job, formato para manter
 compatível) — avaliado e descartado para esta rodada por ser
 desproporcional ao problema que motivou a tarefa; fica registrado aqui
 como opção futura se as limitações acima incomodarem na prática.
+
+### Matriz de OCR: idioma, escala e o achado real (rodada 5, TAREFA-5)
+
+**Medição e registro — nenhum código de produção foi alterado por esta
+tarefa.** O objetivo era isolar por que o OCR não recuperou o conteúdo das
+páginas 61 e 91 do `teste.pdf` (achado da rodada 4), testando três fatores
+não controlados: idioma, escala do RapidOCR, e motor de OCR.
+
+**Método:** as duas páginas extraídas isoladamente (`pypdfium2.import_pages`,
+uma página por PDF), convertidas repetidas vezes variando um parâmetro por
+vez, medindo tempo, pico de RSS e presença dos termos-alvo
+(`password-complexity`, `update-server`, `Max Rows in CSV Export`,
+`corp-syslog`, mais `scp_admin` como quinto termo).
+
+**(a) Idioma — REFUTADO, e por um motivo mais direto que o esperado.**
+`lang=["pt"]` e `lang=["en"]` produziram saída **byte a byte idêntica** nas
+duas páginas. O log do RapidOCR mostra por quê: os dois carregam
+exatamente o mesmo arquivo de modelo de reconhecimento
+(`PP-OCRv6_rec_small.onnx`) — nesta instalação (tier "small"), o parâmetro
+`lang` não troca de modelo entre português e inglês. A premissa do prompt
+("PP-OCRv6 trata os dois como modelos distintos") não se confirmou para o
+tier instalado.
+
+**(b) Escala — também REFUTADO.** `scale` em 1.0, 3.0 (padrão) e 6.0
+produziram a mesma saída idêntica, nas duas páginas. Upscaling/downscaling
+não é o fator.
+
+**(c) Motor alternativo — não testável neste ambiente.** Sem GPU NVIDIA
+(`nvidia-smi` ausente, nenhum dispositivo CUDA detectado): Nemotron-OCR
+fica fora de alcance. Tesseract não está instalado e o ambiente não tem
+`sudo` sem senha para instalá-lo — não testado. Registrado como bloqueio
+de ambiente, não como resultado.
+
+**O achado real, encontrado ao investigar por que (a) e (b) não mudavam
+nada:** com `force_full_page_ocr=True` (bypassa o filtro de região
+`PDF_AWARE_LAYOUT_REGIONS` por completo) o resultado continuou **idêntico**
+— sinal de que o problema não era o OCR não rodar na imagem certa. Isso
+levou a inspecionar a assinatura de `export_to_markdown()` mais a fundo:
+ela tem um parâmetro `traverse_pictures: bool = False`, com o comentário
+"*Must be set to True for scanned/image-based PDFs processed with
+full-page OCR, where the layout model places all OCR text as children of
+a top-level PictureItem*". O projeto **nunca passou esse parâmetro**.
+
+Testado: `resultado.document.export_to_markdown(traverse_pictures=True)`
+na mesma conversão (mesmo `ConversionResult`, nada reprocessado) —
+
+| Página | Termos-alvo recuperados sem `traverse_pictures` | Termos-alvo recuperados com `traverse_pictures=True` |
+|---|---|---|
+| 61 | nenhum (0/3 aplicáveis) | `scp_admin`, `password-complexity`, `update-server` (3/3) |
+| 91 | nenhum (0/2 aplicáveis) | `Max Rows in CSV Export`, `corp-syslog` (2/2) |
+
+**Os cinco termos-alvo da rodada 4 aparecem, todos.** O OCR sempre
+recuperou esse conteúdo — o texto reconhecido fica pendurado como filhos
+do `PictureItem` na árvore do documento, e `export_to_markdown()` só
+desce nessa filhos quando `traverse_pictures=True`. Sem esse parâmetro, o
+texto existe no `DoclingDocument` e é descartado silenciosamente na
+serialização — o achado da rodada 4 ("OCR falha nas capturas densas") mediu
+o sintoma certo com o instrumento errado: a medição do `.md` de saída, sem
+esse parâmetro, é cega para o que o OCR de fato produziu.
+
+**Custo de ligar isso:** desprezível — é um parâmetro puro de serialização
+sobre um `ConversionResult` já pronto, não dispara reprocessamento. Medido:
+~6ms → ~10ms por chamada de `export_to_markdown()` na página 61. O custo de
+memória do OCR em si (2,37× de RSS, rodada 4) **não muda** — esse número já
+reflete rodar o OCR; `traverse_pictures` só decide se o resultado aparece
+no `.md` ou fica preso na árvore, sem custo adicional de conversão.
+
+**Formato do texto recuperado, com ressalva:** o texto sai como uma
+sequência linear de fragmentos (um por célula/linha detectada pelo OCR),
+sem preservar a estrutura de tabela/coluna original — legível e buscável,
+mas não formatado como a tabela visual do XML Diff. Ainda assim, muito
+mais útil que `<!-- image -->` vazio: todos os termos técnicos ficam
+presentes e buscáveis.
+
+**Não implementado nesta rodada** (restrição explícita do prompt — TAREFA-5
+é só medição). Ver TAREFA-6 para a correção do relatório da rodada 4 à luz
+deste achado, e a rodada de memória/qualidade seguinte para decidir se
+`traverse_pictures=True` vira o padrão do projeto.
 
 ### Convenção de erros
 
