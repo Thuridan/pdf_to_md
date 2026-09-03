@@ -154,9 +154,9 @@ scripts/restart.sh   # stop.sh seguido de start.sh
 
 Dois suites independentes espelham a separação motor/web:
 
-- `test_pdf_to_md.py` (raiz) — 76 testes do motor/CLI, sem depender do
+- `test_pdf_to_md.py` (raiz) — 87 testes do motor/CLI, sem depender do
   FastAPI.
-- `backend/tests/` — 52 testes da API, que **forçam `engine="simples"`** no
+- `backend/tests/` — 71 testes da API, que **forçam `engine="simples"`** no
   `lifespan` via monkeypatch de `motor_pool.inicializar`. Isso é
   intencional: os testes de fila/worker precisam de um motor real (não um
   mock) para validar o ciclo de vida do `Job`, mas não podem depender do

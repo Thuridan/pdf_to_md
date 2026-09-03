@@ -17,6 +17,7 @@ import tempfile
 import types
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).parent))
 import pdf_to_md as m  # noqa: E402
@@ -423,18 +424,30 @@ class TestMotorDocling(BaseTemp):
 # 5. Selecao de motor
 # ---------------------------------------------------------------------------
 class TestSelecaoMotor(BaseTemp):
+    """BUG-24 (bugs-2.md): estes 3 primeiros testes decidiam a disponibilidade
+    do Docling checando/removendo sys.modules e confiando que
+    MotorDocling.disponivel() (via importlib.util.find_spec) enxergaria essa
+    manipulacao. find_spec CONSULTA sys.modules primeiro, entao
+    instalar_stub_docling() funcionava (o stub injetado e' o que find_spec
+    acha). Mas remover_stub_docling() so apaga as entradas de sys.modules -
+    se o pacote docling real estiver instalado no ambiente, find_spec cai
+    pro disco e o acha de qualquer jeito, entao o teste media a instalacao
+    do ambiente, nao a logica de selecionar_motor(). Patch direto em
+    MotorDocling.disponivel() testa exatamente a decisao sob teste,
+    independente do que estiver ou nao instalado de verdade."""
+
     def test_auto_prefere_docling(self):
-        instalar_stub_docling()
-        self.assertEqual(m.selecionar_motor(m.Config()).nome, "docling")
+        with patch.object(m.MotorDocling, "disponivel", return_value=(True, "")):
+            self.assertEqual(m.selecionar_motor(m.Config()).nome, "docling")
 
     def test_auto_cai_para_simples(self):
-        remover_stub_docling()
-        self.assertEqual(m.selecionar_motor(m.Config()).nome, "simples")
+        with patch.object(m.MotorDocling, "disponivel", return_value=(False, "ausente")):
+            self.assertEqual(m.selecionar_motor(m.Config()).nome, "simples")
 
     def test_docling_explicito_falha_com_mensagem_util(self):
-        remover_stub_docling()
-        with self.assertRaises(m.ErroConversao) as ctx:
-            m.selecionar_motor(m.Config(engine="docling"))
+        with patch.object(m.MotorDocling, "disponivel", return_value=(False, "ausente")):
+            with self.assertRaises(m.ErroConversao) as ctx:
+                m.selecionar_motor(m.Config(engine="docling"))
         self.assertIn("pip install", str(ctx.exception))
 
     def test_simples_explicito(self):

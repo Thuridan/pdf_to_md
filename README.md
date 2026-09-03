@@ -259,15 +259,13 @@ segue normalmente; a flag não altera o comportamento quando omitida.
 ## Testes
 
 ```bash
-python -m unittest test_pdf_to_md -v   # 76 testes (motor de conversão / CLI)
-python -m pytest backend/               # suíte da aplicação web (52 testes)
+python -m unittest test_pdf_to_md -v   # 87 testes (motor de conversão / CLI)
+python -m pytest backend/               # suíte da aplicação web (71 testes)
 python scripts/verificar_api_docling.py <dir>  # confere a API do Docling estaticamente
 ```
 
-Duas falhas são esperadas *apenas* se o pacote `docling` real estiver
-instalado no mesmo ambiente de teste: `test_auto_cai_para_simples` e
-`test_docling_explicito_falha_com_mensagem_util` assumem um ambiente sem
-Docling instalado para exercitar o caminho de fallback/erro do
-`selecionar_motor`. Isso não é uma regressão — é uma limitação de isolamento
-da suíte de testes, não do código do conversor (confirmado comparando a
-mesma suíte com e sem o Docling instalado).
+As duas suítes terminam em `OK`/todos os testes passando, com ou sem o
+pacote `docling` real instalado no ambiente de teste — `TestSelecaoMotor`
+usa `unittest.mock.patch` em `MotorDocling.disponivel()` para exercitar o
+caminho de fallback/erro de `selecionar_motor` sem depender do que estiver
+de fato instalado.
