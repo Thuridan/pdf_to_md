@@ -245,7 +245,90 @@ está instalado na máquina de CI.
   Python porque o motor não pode ser compartilhado entre processos sem
   recarregar modelos; separar em serviços exigiria resolver esse problema
   primeiro (ex.: um serviço de inferência dedicado), o que está fora do
-  escopo de uma ferramenta local.
+  escopo de uma ferramenta local. Ver "`docling-serve` como motor
+  remoto" abaixo — é exatamente esse "serviço de inferência dedicado",
+  avaliado e não adotado nesta rodada.
 - **Sem build step no frontend** — ver [`frontend.md`](frontend.md).
 - **Sem ORM/banco** — não há dado que precise sobreviver a um restart além
   dos próprios arquivos `.md`, que já são o produto final.
+
+### `docling-serve` como motor remoto (avaliado, rodada 5, TAREFA-7)
+
+**Investigação e registro — nada foi instalado ou migrado.** `docling-serve`
+não está instalado neste ambiente; a investigação usou o
+`docling.service_client` (já embutido no pacote `docling` 2.123.1
+instalado) e o código-fonte público de `docling-serve`/`docling-jobkit`
+(GitHub, via `gh api`, lido diretamente — não presumido).
+
+**1. Cobertura das opções que o projeto usa hoje.** Verificado no
+`ConvertDocumentsOptions` (`docling.datamodel.service.options`, parte do
+pacote `docling` local, usado pelo `DoclingServiceClient`):
+
+| Opção que o projeto usa | Campo do `ConvertDocumentsOptions` | Cobertura |
+|---|---|---|
+| `--ocr/--no-ocr` (`cfg.ocr`) | `do_ocr: bool` | completa |
+| `--lang` (`cfg.lang`) | `ocr_lang: list[str] \| None` | completa |
+| `--tables` (`cfg.tables`) | `table_mode: TableFormerMode` + `table_cell_matching: bool` | completa |
+| Seleção de páginas (rodada futura) | `page_range: Tuple[int, int]` — parâmetro de primeira classe em `client.convert()` | completa, já pronta |
+| Marcador de página (rodada 5, TAREFA-1) | `md_page_break_placeholder: str` | completa |
+| `--timeout` (`cfg.timeout`) | `document_timeout: float \| None` | completa |
+| `--ocr-backend` (RapidOCR: onnxruntime/openvino/paddle/torch) | sem campo dedicado — só `ocr_custom_config: dict` (opaco, não tipado) | **incerta**, não testável sem instância real |
+| `--device`/`--threads` (`cfg.device`, `cfg.threads`) | nenhum campo | **não coberta** — vira configuração do servidor (`DOCLING_SERVE_ENG_LOC_*`), não do cliente |
+| Supressão de ícones (rodada 5, TAREFA-2) | nenhum campo REST | **não coberta pela API** — mas não perdida: `client.convert()` devolve o mesmo `docling.datamodel.document.ConversionResult` da conversão local (confirmado lendo `docling/service_client/client.py` — mesma classe importada), então `resultado.document` continua sendo um `DoclingDocument` de verdade. `_exportar_markdown()`/`_numerar_paginas()` (deste projeto) funcionariam sem alteração sobre um resultado remoto. |
+| Grau de confiança (rodada 5, TAREFA-3) | `resultado.confidence` — mesma classe, mas **não verificado** se o servidor de fato preenche e serializa esse campo na resposta (não há instância real para testar) |
+
+Ou seja: um hipotético `MotorDoclingServe(MotorBase)` poderia reaproveitar
+`_exportar_markdown()`, `_numerar_paginas()` e `_extrair_confianca()` sem
+mudança nenhuma — eles operam sobre `resultado.document`/`.confidence`,
+que têm o mesmo formato local ou remoto. Só a chamada que produz
+`resultado` mudaria (`DoclingServiceClient.convert()` em vez de
+`DocumentConverter.convert()`). O que se perde ao migrar: controle fino de
+acelerador por processo (`--device`/`--threads`) e o backend específico do
+RapidOCR — ambos viram decisão do operador do servidor, não do chamador.
+
+**2. O que `SHARE_MODELS` realmente compartilha — mais limitado do que a
+descrição do prompt desta rodada sugeria.** Lido em
+`docling_jobkit/orchestrators/local/worker.py`
+(`docling-project/docling-jobkit`, GitHub): com `ENG_LOC_SHARE_MODELS=true`,
+os `ENG_LOC_NUM_WORKERS` workers **dentro do mesmo processo** (tarefas
+`asyncio`, não processos separados) compartilham uma única instância de
+`DoclingConverterManager` — o mesmo conjunto de modelos carregados
+(layout + TableFormer + OCR). Com o padrão (`false`), cada worker constrói
+o seu próprio `DoclingConverterManager` — N workers, N cópias completas dos
+modelos, no mesmo processo.
+
+**Isso não é a mesma coisa que os ~22 GB por worker que inviabilizaram o
+pool de processos** (round de gestão de memória, ainda não feita) — nas
+medições reais deste projeto (rodada 3, TAREFA-4), um `DocumentConverter`
+carregado custa **~1,4–1,9 GB** de RSS por modo de OCR, não ~22 GB. O custo
+de dezenas de GB medido nas rodadas 3/4 (18–44 GB de pico) vem do
+**processamento de página em si** (bitmaps, ativações do layout/TableFormer,
+OCR por região) durante uma conversão ativa — não do carregamento estático
+dos modelos. `SHARE_MODELS` deduplica só a parte estática (o modelo
+carregado uma vez); dois workers convertendo documentos grandes **ao mesmo
+tempo**, mesmo com `SHARE_MODELS=true`, ainda pagam o pico de RSS de
+processamento de página **cada um**, porque esse custo não está nos pesos
+do modelo — está no trabalho em andamento. `SHARE_MODELS` ajuda o caso "N
+workers ociosos ou processando documentos pequenos"; não resolve o caso
+que motivou a rodada de memória futura (documentos grandes, processados em
+paralelo).
+
+**3. O que fica de fora, mesmo usando `docling-serve`:** isolamento por
+usuário (não há conceito de dono de job — resultados expiram por
+`result_removal_delay`, sem ACL), a UI (é só API + um cliente Python, sem
+frontend de fila como o deste projeto), fila persistente/histórico de jobs
+(orientado a tarefa única com expiração, não a um registro duradouro como
+`JobStore`), e seleção de páginas na UI (o campo `page_range` existe na
+API, mas nada no `docling-serve` desenha um seletor).
+
+**4. Custo operacional:** um processo/container a mais para subir, versionar
+e monitorar — hoje o projeto é um único processo Python. Migrar exigiria
+decidir hospedagem (self-hosted vs. um serviço gerenciado como o
+mencionado na doc do cliente) e adicionar uma dependência de rede onde
+antes havia uma chamada de função local.
+
+**Decisão:** não tomada aqui, por instrução explícita — este registro é
+material de entrada para o usuário decidir depois, com base em dados
+verificados (não nas descrições da origem da rodada) e considerando que a
+motivação original (`SHARE_MODELS` resolveria o custo de memória) só se
+sustenta parcialmente.
