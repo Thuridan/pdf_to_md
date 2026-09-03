@@ -78,7 +78,7 @@
 - **Correção aplicada:** `pyproject.toml` — `pypdfium2>=4.30.0,!=4.30.1,<6` virou dependência obrigatória em `[project.dependencies]` (a exclusão `!=4.30.1` replica a que o próprio `docling-slim` declara — confirmado baixando `docling_slim` 2.123.1 e inspecionando seu `METADATA`). Extra `web` passou a depender de `pdf-to-md[simples]`.
 - **Validação da correção:** venv limpo, `pip install -e ".[web]"`, `uvicorn backend.src.app:app` sobe, loga "Docling indisponivel ... usando motor 'simples'", `GET /api/health` e `GET /api/motor` respondem `200`.
 - **Testes de regressão:** `TestEmpacotamento.test_pypdfium2_e_dependencia_obrigatoria`, `test_extra_web_garante_um_motor_disponivel` (`test_pdf_to_md.py`).
-- **Risco residual:** nenhum — o motor `simples` é estritamente menos capaz que `docling` (sem OCR/tabelas), mas isso é o comportamento documentado de fallback, não uma lacuna desta correção.
+- **Risco residual (corrigido — ver `bug_report-2.md`, BUG-27):** ~~nenhum~~ o motor `simples` é estritamente menos capaz que `docling` (sem OCR/tabelas — comportamento de fallback documentado, não uma lacuna). Mas o cenário de startup sem NENHUM motor continua possível apesar do empacotamento (`pip install --no-deps`, ambiente quebrado, remoção manual de `pypdfium2`) — improvável, não impossível: derrubava o processo com um traceback cru de `ErroConversao`, sem orientar quem está subindo o servidor sobre o que instalar. Corrigido no BUG-27: `backend/src/app.py` captura `ErroConversao` no `lifespan`, loga uma mensagem acionável (`pip install '.[docling]'` ou `'.[simples]'`) e relança — continua fail-fast, só com mensagem melhor.
 
 ### BUG-03 — Superfície web sem limite de entrada
 

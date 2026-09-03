@@ -66,6 +66,22 @@ class TestApp(unittest.TestCase):
         self.assertEqual(resposta.status_code, 200)
         self.assertEqual(resposta.json()["status"], "ok")
 
+    def test_startup_sem_motor_loga_mensagem_acionavel_e_continua_falhando(self):
+        """BUG-27 (bugs-2.md): motor_pool.inicializar() pode levantar
+        ErroConversao numa instalacao sem nenhum motor (`pip install
+        --no-deps`, ambiente quebrado, remocao manual) - improvavel apos o
+        BUG-02 (pypdfium2 obrigatorio), mas nao impossivel. O startup deve
+        continuar falhando (fail-fast, nao sobe degradado), so com uma
+        mensagem que diz o que instalar em vez de so o traceback cru."""
+        with patch.object(
+            motor_pool, "inicializar", side_effect=m.ErroConversao("nenhum motor")
+        ):
+            with self.assertLogs("backend.src.app", level="ERROR") as captura:
+                with self.assertRaises(m.ErroConversao):
+                    with TestClient(app):
+                        pass
+        self.assertTrue(any("pip install" in msg for msg in captura.output))
+
 
 class TestCriarJobsEndpoint(unittest.TestCase):
     """Forca engine='simples' no lifespan: os jobs aqui rodam de verdade em

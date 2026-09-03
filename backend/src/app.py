@@ -13,6 +13,7 @@ Uso rapido:
 
 from __future__ import annotations
 
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -25,11 +26,26 @@ from backend.src.services import jobs, motor_pool
 
 DIR_FRONTEND = Path(__file__).resolve().parents[2] / "frontend"
 
+LOG = logging.getLogger(__name__)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Seleciona o motor UMA vez para o processo inteiro (ver motor_pool).
-    motor_pool.inicializar()
+    # pypdfium2 e dependencia obrigatoria (pyproject.toml) e o extra `web`
+    # traz `simples` de brinde, entao isso nao deveria faltar numa instalacao
+    # normal - mas `pip install --no-deps`, um ambiente quebrado ou uma
+    # remocao manual ainda derrubam o startup aqui. Continua sendo fail-fast
+    # (nao sobe degradado sem motor algum), so com uma mensagem acionavel em
+    # vez de so o traceback puro do ErroConversao.
+    try:
+        motor_pool.inicializar()
+    except pdf_to_md.ErroConversao:
+        LOG.error(
+            "Nenhum motor de conversao disponivel; instale com "
+            "`pip install '.[docling]'` ou `pip install '.[simples]'`."
+        )
+        raise
     jobs.iniciar_worker()
     try:
         yield
