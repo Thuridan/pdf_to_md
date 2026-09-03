@@ -12,6 +12,7 @@ const clearDoneBtn = document.getElementById("clear-done");
 const motorPill = document.getElementById("motor-pill");
 const themeToggle = document.getElementById("theme-toggle");
 const appVersionEl = document.getElementById("app-version");
+const conexaoAlertaEl = document.getElementById("conexao-alerta");
 
 let jobsCache = [];
 
@@ -290,17 +291,43 @@ function renderizarFila() {
 // "andar para tras" (ex.: um job Concluido voltar a aparecer Processando).
 let seqAtual = 0;
 
+// Sem isso, uma queda do servidor era invisivel: o catch de atualizarFila()
+// era vazio e carregarMotor() so roda uma vez no load - se o pill falhasse
+// ali, ficava "Motor: indisponível" pra sempre, e a UI seguia fazendo poll
+// em silencio sem nenhum sinal pro usuario de que nada estava respondendo.
+const LIMITE_FALHAS_PARA_ALERTA = 3;
+let falhasConsecutivas = 0;
+
+function marcarFalhaDePoll() {
+  falhasConsecutivas += 1;
+  if (falhasConsecutivas >= LIMITE_FALHAS_PARA_ALERTA) {
+    conexaoAlertaEl.hidden = false;
+  }
+}
+
+function marcarSucessoDePoll() {
+  const estavaAlertando = falhasConsecutivas >= LIMITE_FALHAS_PARA_ALERTA;
+  falhasConsecutivas = 0;
+  conexaoAlertaEl.hidden = true;
+  if (estavaAlertando) carregarMotor(); // o pill pode ter ficado preso em "indisponível"
+}
+
 async function atualizarFila() {
   const seq = ++seqAtual;
   try {
     const resp = await fetch("/api/jobs");
-    if (!resp.ok || seq !== seqAtual) return;
+    if (seq !== seqAtual) return; // resposta obsoleta - nem falha nem sucesso
+    if (!resp.ok) {
+      marcarFalhaDePoll();
+      return;
+    }
     const dados = await resp.json();
     if (seq !== seqAtual) return;
     jobsCache = dados.jobs || [];
     renderizarFila();
+    marcarSucessoDePoll();
   } catch (e) {
-    // poll seguinte corrige - nao interrompe o ciclo por uma falha isolada
+    if (seq === seqAtual) marcarFalhaDePoll();
   }
 }
 

@@ -575,6 +575,23 @@ class TestEmpacotamento(unittest.TestCase):
         ):
             self.assertTrue((raiz / "fontes" / nome).is_file(), f"faltando frontend/fontes/{nome}")
 
+    def test_frontend_avisa_sobre_perda_de_conexao(self):
+        """BUG-20: o catch de atualizarFila() era vazio e carregarMotor() so
+        rodava uma vez no load - se o servidor caisse, a UI seguia fazendo
+        poll em silencio; se o pill falhasse no load, ficava "Motor:
+        indisponível" pra sempre."""
+        raiz = Path(__file__).resolve().parent / "frontend"
+        html = (raiz / "index.html").read_text(encoding="utf-8")
+        self.assertIn('id="conexao-alerta"', html)
+
+        js = (raiz / "app.js").read_text(encoding="utf-8")
+        self.assertIn("conexaoAlertaEl", js)
+        self.assertIn("marcarFalhaDePoll", js)
+        self.assertIn("marcarSucessoDePoll", js)
+        # ao recuperar a conexao, o pill precisa ser recarregado, nao so
+        # deixado no "indisponivel" de uma falha anterior.
+        self.assertIn("carregarMotor()", js)
+
     def test_frontend_nao_afirma_gpu_ou_docling_incondicionalmente(self):
         """BUG-17: badge/resumo/rodape do frontend diziam "Aguardando GPU" e
         "motor Docling" incondicionalmente, mesmo quando o motor real e
