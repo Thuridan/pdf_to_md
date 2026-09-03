@@ -199,6 +199,20 @@ apêndice saem vazias. É exatamente para esse caso que o override `sempre`
 existe — a detecção é por documento, não por página, de propósito (ver
 `docs/backend.md` para o raciocínio completo).
 
+**"Tem camada de texto" não implica "não tem conteúdo preso em imagem".**
+Um documento nativo pode ter texto corrido impecável e ainda assim ter
+capturas de tela grandes cujo conteúdo só existe dentro do bitmap — no
+Markdown isso vira um `<!-- image -->` vazio. Medido num manual real
+(`teste.pdf`, 1310 páginas): ligar `--ocr` recupera texto de capturas
+simples de UI (diálogos, menus, checkboxes), mas **não** recuperou o
+conteúdo das duas capturas técnicas densas verificadas (um diff de XML, uma
+tela de configuração com grade de campos) — só fragmentos ilegíveis ou
+nada. E o custo é alto: OCR numa faixa de 46 páginas do mesmo manual
+multiplicou o pico de RSS por 2,4× (44,3 GB). Por isso a detecção
+automática **não** foi ampliada para considerar área de imagem nesta
+rodada — o ganho não se confirmou no caso que motivou a ideia, e o custo de
+memória é real. Ver `docs/backend.md` para a medição completa.
+
 ## Aceleração por GPU
 
 O pipeline tem **dois estágios independentes**, com suportes de hardware diferentes.

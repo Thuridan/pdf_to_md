@@ -191,6 +191,100 @@ chegava ao motor (`motor.converter(pdf)` não recebia `cfg` nenhum). Ver
 completa (as duas pontas: um converter por modo, e `cfg.ocr` de fato
 repassado a `motor.converter()`).
 
+### Medição: OCR recupera capturas de tela em documento nativo? (rodada 4, TAREFA-1)
+
+A rodada 4 partiu da hipótese de que ligar OCR num documento nativo
+recuperaria o texto preso dentro de capturas de tela grandes (o
+`<!-- image -->` no Markdown vira um buraco de conteúdo silencioso). A
+hipótese foi **testada e não se sustentou para os dois exemplos que a
+motivaram** — por isso a rodada parou aqui: as TAREFA-2 e TAREFA-3 (segundo
+sinal de detecção e exposição de `ocr_origem`) **não foram feitas**.
+
+**Método:** faixa real de 46 páginas (50–95) extraída de `teste.pdf` via
+`pypdfium2.PdfDocument.import_pages()` — inclui as duas capturas citadas no
+prompt da rodada (página 61: XML diff de Config Audit; página 91: tela de
+Logging and Reporting Settings). Convertida duas vezes, `ocr=False` e
+`ocr=True`, com `settings.debug.profile_pipeline_timings = True`.
+
+| Medida | `ocr=False` | `ocr=True` |
+|---|---|---|
+| Tempo total | 114,27 s | 157,69 s (1,38×) |
+| Pico de RSS (`/usr/bin/time -v`) | 18,72 GB | 44,31 GB (2,37×) |
+| Estágio `ocr` (`conv_res.timings`) | inexistente | 135,69 s (86% do tempo total) |
+| `layout` / `table_structure` | 31,35 s / 17,23 s | 30,64 s / 16,99 s (~iguais) |
+
+Os cinco termos verificados manualmente na página 61
+(`scp_admin`, `password-complexity`, `update-server`, `Max Rows in CSV
+Export`, `corp-syslog`) foram procurados nos dois `.md` de saída:
+**nenhum apareceu em nenhum dos dois modos** (`scp_admin` aparece nos dois,
+mas é falso positivo — um exemplo de comando SCP legítimo em outra página da
+mesma faixa, sem relação com a captura da página 61). A mesma checagem na
+região da página 91 (Logging and Reporting Settings): o `<!-- image -->`
+correspondente não ganhou nenhum texto ao redor entre os dois modos.
+
+Um `diff` entre os dois `.md` mostra que o OCR **funciona mecanicamente** —
+recupera texto real e coerente de várias outras capturas na mesma faixa
+(diálogo de busca "Global Find", árvores de checkbox de permissão como "PDF
+Summary Reports"/"User Activity Report", um parágrafo inteiro de exemplo de
+perfil de administrador). Mas nas duas capturas que motivaram a rodada,
+o resultado foi: nada de útil perto da imagem da página 91 (placeholder
+ficou vazio antes e depois), e só fragmentos garbled perto da região da
+página 61 ("Lon Sottinae", "Version 1", "Version 6" — nenhum termo técnico
+recuperável). O log de execução registrou exatamente duas ocorrências de
+`RapidOCR returned empty result!`, consistente com falha silenciosa em
+pelo menos parte dessas capturas específicas.
+
+**Leitura:** o sinal não é "OCR nunca ajuda" — é "OCR ajuda em capturas
+simples de UI (diálogos, checkboxes, menus) e falha em capturas densas de
+texto técnico monoespaçado/tabular (diff de XML, tela de configuração com
+grade de campos)", que são justamente o tipo de captura mais valioso para
+recuperar. Adicionar um segundo sinal de detecção por área de imagem
+(TAREFA-2) ligaria OCR automaticamente para documentos como `teste.pdf` e
+pagaria o custo medido acima sem necessariamente recuperar o conteúdo que
+motivou a mudança — e o custo é real: 44,3 GB de pico numa faixa de só 46
+páginas é compatível com o pico de ~44,2 GB já observado convertendo o
+`teste.pdf` inteiro (1310 páginas) **sem** OCR, o que sugere que ligar OCR
+amplamente num documento desse tamanho arriscaria OOM sem que o problema de
+gestão de memória (rodada futura, fora do escopo desta) esteja resolvido.
+
+Por isso a heurística atual (`tem_camada_de_texto()`, rodada 3 TAREFA-3)
+**não foi alterada** nesta rodada — ela já é a decisão apropriada dado que a
+correção proposta não entrega o benefício esperado, ao custo medido acima.
+Ver `bug_report-4.md` para o registro completo (evidências, comandos e
+classificação) e a avaliação (não implementada) do `<!-- image -->` em si.
+
+### Decisão registrada (não implementada): embutir imagens no Markdown (rodada 4, TAREFA-4)
+
+O `<!-- image -->` é um problema **separado** do OCR e continua existindo
+mesmo com a heurística de detecção como está — é assim que
+`export_to_markdown()` representa qualquer figura, recuperada por OCR ou
+não. Quem controla isso são as opções de imagem do pipeline
+(`generate_picture_images`, `images_scale`) e o modo de imagem do export;
+o projeto hoje não configura nenhuma das duas. Avaliação, sem
+implementação, por instrução explícita do prompt desta rodada:
+
+- **O que seria preciso:** ligar `generate_picture_images=True` nas
+  `PdfPipelineOptions` faz o Docling manter o bitmap recortado de cada
+  figura anexado ao `PictureItem`; o modo de imagem do
+  `export_to_markdown()` (`ImageRefMode.EMBEDDED` ou `REFERENCED`) decide
+  se isso vira `data:` URI inline no `.md` ou um arquivo separado ao lado
+  dele. Embutido é mais simples para o usuário levar um único arquivo;
+  referenciado evita inflar o `.md` mas exige empacotar e servir os
+  arquivos junto (a rota de download já lida só com um `.md` por job hoje).
+- **O custo:** `generate_picture_images` mantém os bitmaps de página em
+  memória durante toda a conversão, além do que layout/TableFormer/OCR já
+  usam — soma diretamente ao pico de RSS. O pico de 44 GB já observado
+  convertendo o `teste.pdf` inteiro (sem essa opção) já é preocupante por
+  si só (ver rodada 3, TAREFA-4); ligar isso sem antes resolver a gestão de
+  memória (rodada futura) é arriscar OOM em qualquer documento grande com
+  muitas imagens — e `teste.pdf` tem 1357 imagens.
+- **Escopo, por job ou global:** faz mais sentido como opção por job, no
+  mesmo padrão do seletor de OCR (`modo_ocr`) — um usuário processando um
+  manual com capturas relevantes pagaria o custo deliberadamente, sem
+  forçá-lo em todos os outros jobs da fila.
+
+Este item é insumo para a rodada de memória; não foi antecipado.
+
 ### Convenção de erros
 
 - **`404`** — recurso (job) não existe no `JobStore`.
