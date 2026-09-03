@@ -102,13 +102,22 @@ trabalho de fato). Duas implementações:
 
 ### `MotorDocling` — alta fidelidade
 
-- **`_conv` é `None` até a primeira conversão.** `_obter_converter()`
-  instancia `DocumentConverter` sob demanda e cacheia em `self._conv` — o
-  carregamento de modelos (layout + TableFormer + OCR) só acontece uma vez
-  por instância de `MotorDocling`, não por chamada de `converter()`. É essa
-  memoização, combinada com o motor sendo reaproveitado por todo o lote
-  (CLI) ou pela vida do processo (backend, via `motor_pool`), que evita
-  recarregar modelos pesados repetidamente.
+- **`_convs` é `{}` até a primeira conversão de cada modo** (rodada 3,
+  TAREFA-4 — antes era um único `_conv`, ver `architecture.md`/`backend.md`
+  para o motivo da troca: `do_ocr` é opção de construção do
+  `DocumentConverter`, não argumento de `convert()`, então ligar/desligar
+  OCR por job exige um converter por modo). `_obter_converter(ocr)`
+  instancia um `DocumentConverter` sob demanda por chave (`True`/`False`) e
+  cacheia em `self._convs[ocr]` — o carregamento de modelos (layout +
+  TableFormer, e OCR só quando `ocr=True`) só acontece uma vez por
+  combinação (instância de `MotorDocling`, modo de OCR), não por chamada de
+  `converter()`. É essa memoização, combinada com o motor sendo
+  reaproveitado por todo o lote (CLI) ou pela vida do processo (backend, via
+  `motor_pool`), que evita recarregar modelos pesados repetidamente.
+  `converter(pdf, *, ocr=None)` usa `self.cfg.ocr` quando `ocr` não é
+  informado (compatibilidade com quem chama sem esse argumento) ou o valor
+  explícito quando é — é assim que `converter_arquivo()` repassa o `cfg.ocr`
+  por job (rodada 3) até o motor de fato.
 - **`_opcoes_ocr()`** traduz `cfg.ocr_engine` para a classe de opções certa
   do Docling (`RapidOcrOptions`/`EasyOcrOptions`/`TesseractOcrOptions`).
   RapidOCR só aceita um idioma por execução — se `cfg.lang` tiver mais de
@@ -131,7 +140,7 @@ trabalho de fato). Duas implementações:
 ### `MotorSimples` — leve, sem IA
 
 ```python
-def converter(self, pdf: Path) -> str:
+def converter(self, pdf: Path, *, ocr: bool | None = None) -> str:
     doc = pdfium.PdfDocument(str(pdf))
     ...
     texto = pagina.get_textpage().get_text_bounded() or ""
@@ -139,7 +148,10 @@ def converter(self, pdf: Path) -> str:
 ```
 
 Só lê a camada de texto nativa do PDF via `pypdfium2` — sem OCR, sem
-detecção de tabelas, sem modelo nenhum carregado. Páginas concatenadas com
+detecção de tabelas, sem modelo nenhum carregado. O parâmetro `ocr` existe
+só para casar a assinatura com `MotorBase`/`MotorDocling` (rodada 3,
+TAREFA-4) — é ignorado, este motor nunca faz OCR de qualquer jeito. Páginas
+concatenadas com
 separador `\n\n---\n\n` (um único documento Markdown, não um por página). Se
 nenhuma página tiver texto extraível (PDF puramente escaneado), levanta
 `ErroConversao` com uma dica explícita para usar `--engine docling --ocr` —

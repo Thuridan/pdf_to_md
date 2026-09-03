@@ -299,18 +299,31 @@ class MotorFake(m.MotorBase):
 
     def __init__(self, texto="# ok\n", excecao=None):
         self.texto, self.excecao, self.chamadas = texto, excecao, []
+        self.ocr_recebido = []
 
     def disponivel(self):
         return True, ""
 
-    def converter(self, pdf):
+    def converter(self, pdf, *, ocr=None):
         self.chamadas.append(pdf)
+        self.ocr_recebido.append(ocr)
         if self.excecao:
             raise self.excecao
         return self.texto
 
 
 class TestConversaoUnitaria(BaseTemp):
+    def test_converter_arquivo_repassa_cfg_ocr_ao_motor(self):
+        """TAREFA-4 (rodada 3): converter_arquivo() calculava cfg mas nunca
+        repassava pra motor.converter() - o motor sempre usava seu proprio
+        self.cfg.ocr fixado na construcao, entao um cfg.ocr diferente por
+        chamada nao tinha efeito NENHUM (nao so "so o primeiro job conta")."""
+        pdf = gerar_pdf(self.tmp / "a.pdf", ["A"])
+        motor = MotorFake()
+        m.converter_arquivo(pdf, self.tmp / "a.md", motor, m.Config(ocr=True))
+        m.converter_arquivo(pdf, self.tmp / "b.md", motor, m.Config(ocr=False))
+        self.assertEqual(motor.ocr_recebido, [True, False])
+
     def test_escrita_atomica_sem_deixar_tmp(self):
         alvo = self.tmp / "d" / "x.md"
         m.escrever_atomico(alvo, "conteudo")
@@ -414,6 +427,33 @@ class TestMotorDocling(BaseTemp):
         )
         self.assertEqual(reg["opcoes"].artifacts_path, "/modelos")
         self.assertEqual(reg["opcoes"].document_timeout, 90.0)
+
+    def test_um_converter_por_modo_de_ocr_cacheado_separadamente(self):
+        """TAREFA-4 (rodada 3): do_ocr e fixado na construcao do
+        DocumentConverter (nao e argumento de convert()) - ligar/desligar
+        OCR por job exige um converter por modo, nao um unico reaproveitado."""
+        reg = instalar_stub_docling()
+        motor = m.MotorDocling(m.Config(ocr=True))
+        pdf = gerar_pdf(self.tmp / "a.pdf", ["A"])
+
+        motor.converter(pdf, ocr=True)
+        self.assertEqual(reg["instancias"], 1)
+        self.assertEqual(set(motor._convs.keys()), {True})
+
+        motor.converter(pdf, ocr=False)
+        self.assertEqual(reg["instancias"], 2, "modo novo deveria construir um converter novo")
+        self.assertEqual(set(motor._convs.keys()), {True, False})
+        self.assertIsNot(motor._convs[True], motor._convs[False])
+
+        motor.converter(pdf, ocr=True)
+        self.assertEqual(reg["instancias"], 2, "modo ja visto nao deveria reconstruir")
+
+    def test_converter_sem_ocr_explicito_usa_o_padrao_do_cfg(self):
+        reg = instalar_stub_docling()
+        motor = m.MotorDocling(m.Config(ocr=False))
+        motor.converter(gerar_pdf(self.tmp / "a.pdf", ["A"]))  # sem ocr= explicito
+        self.assertFalse(reg["opcoes"].do_ocr)
+        self.assertEqual(set(motor._convs.keys()), {False})
 
     def test_status_failure_vira_erro(self):
         instalar_stub_docling(status="failure")
@@ -956,7 +996,7 @@ class TestMaxPages(BaseTemp):
         class MotorNuncaChamado(m.MotorBase):
             nome = "stub"
             def disponivel(self): return True, ""
-            def converter(self, pdf): raise AssertionError("nao deveria converter")
+            def converter(self, pdf, *, ocr=None): raise AssertionError("nao deveria converter")
 
         resultado = m.converter_arquivo(pdf, saida, MotorNuncaChamado(), m.Config(max_pages=3))
         self.assertEqual(resultado.status, "erro")

@@ -16,7 +16,7 @@ backend/
 │   │   └── api.py              # camada HTTP: valida requests, chama services/
 │   └── services/
 │       ├── jobs.py             # Job, JobStore, fila, worker, progresso, limpeza
-│       └── motor_pool.py       # instância única do motor por processo
+│       └── motor_pool.py       # instância do motor por processo (uma por modo de OCR - ver abaixo)
 └── tests/
     ├── test_app.py             # testes via TestClient (rotas)
     ├── test_jobs.py            # testes unitários do serviço de jobs
@@ -60,6 +60,64 @@ Duas decisões relevantes aqui:
   carregando os modelos pesados sob demanda na primeira conversão real
   (dentro de `MotorDocling._obter_converter`). Isso mantém o startup do
   servidor rápido mesmo com o motor Docling selecionado.
+
+## Um `DocumentConverter` por modo de OCR (rodada 3, TAREFA-4)
+
+Antes da rodada 3, `MotorDocling` guardava um único `DocumentConverter` em
+`self._conv`, construído sob demanda e reaproveitado para sempre — a regra
+de "uma instância por processo" que `architecture.md` documentava. Isso
+quebrou quando a TAREFA-3 passou a decidir OCR por job: `do_ocr` é campo de
+`PdfPipelineOptions`, fixado na construção do `DocumentConverter` (não é
+argumento de `convert()`), então **ligar e desligar OCR por job exige um
+converter por modo** — cada um com sua própria cópia de layout e TableFormer
+carregada (verificado no fonte do `docling` 2.123.1: `do_ocr` participa do
+hash `md5` que `DocumentConverter._get_pipeline()` usa para cachear
+pipelines internamente).
+
+```python
+class MotorDocling(MotorBase):
+    def __init__(self, cfg: Config) -> None:
+        self.cfg = cfg
+        self._convs: dict[bool, DocumentConverter] = {}  # chave: modo de OCR
+
+    def _obter_converter(self, ocr: bool):
+        if ocr not in self._convs:
+            self._convs[ocr] = DocumentConverter(
+                format_options={InputFormat.PDF: PdfFormatOption(
+                    pipeline_options=self._opcoes_pipeline(ocr)
+                )}
+            )
+        return self._convs[ocr]
+
+    def converter(self, pdf: Path, *, ocr: bool | None = None) -> str:
+        efetivo = self.cfg.ocr if ocr is None else ocr
+        resultado = self._obter_converter(efetivo).convert(str(pdf))
+        ...
+```
+
+Ambos os converters continuam preguiçosos — nenhum é criado no startup
+(`motor_pool.inicializar()` continua só decidindo qual motor, não carregando
+modelo algum); cada um só é construído quando um job daquele modo aparece
+pela primeira vez.
+
+**A peça que faltava:** ter um `self._convs` por modo não bastava sozinho —
+`converter_arquivo(pdf, saida, motor, cfg)` já recebia um `cfg` por
+chamada, mas `motor.converter(pdf)` nunca o repassava; o motor sempre usava
+`self.cfg.ocr`, fixado na construção. `_processar()` (TAREFA-3) já montava
+um `Config` por job via `dataclasses.replace(cfg_global, ocr=job.ocr)`, mas
+esse valor nunca chegava ao motor — o override não tinha efeito nenhum na
+prática (nem "primeiro job vence": literalmente nenhum). A correção foi em
+duas pontas: `MotorBase.converter()` ganhou um parâmetro `ocr: bool | None`
+(explícito sobrepõe, `None` cai para `self.cfg.ocr` — compatível com todo
+código existente que chama `.converter(pdf)` sem esse argumento, CLI
+incluída), e `converter_arquivo()` passou a chamar
+`motor.converter(pdf, ocr=cfg.ocr)` explicitamente.
+
+**Custo de memória:** ver a nova seção "Custo de memória por modo de OCR e
+por documento" em [`architecture.md`](architecture.md) — os dois modos
+juntos custam bem menos que a soma ingênua dos dois isolados (memória
+compartilhada de baixo nível), mas o custo por conversão de um documento
+real domina qualquer coisa relacionada a quantos modos estão carregados.
 
 ## Rotas (`routes/api.py`)
 
@@ -124,14 +182,14 @@ caso misto foi validado combinando páginas reais dos dois anteriores
 desligado para o documento inteiro — o modo de falha conhecido documentado
 no `README.md`).
 
-**Limitação até a TAREFA-4:** `MotorDocling` cacheia UM `DocumentConverter`
-por processo, com `do_ocr` fixado nas opções do PRIMEIRO job processado
-(ver `_obter_converter`) — `_processar()` já monta um `Config` por job via
-`dataclasses.replace(cfg, ocr=job.ocr)`, mas até o motor Docling ganhar um
-converter por modo de OCR (TAREFA-4), essa configuração por job só tem
-efeito completo no motor `simples` (que não faz OCR de qualquer jeito). Um
-processo que processa um job com OCR e depois outro sem (ou vice-versa) via
-Docling mantém o `do_ocr` do primeiro para os dois, silenciosamente.
+O override por job só teve efeito completo depois da TAREFA-4 (mesma
+rodada, item seguinte): até ali, `MotorDocling` cacheava UM
+`DocumentConverter` por processo com `do_ocr` fixado nas opções do PRIMEIRO
+job processado, e o `Config` por job que `_processar()` já montava nunca
+chegava ao motor (`motor.converter(pdf)` não recebia `cfg` nenhum). Ver
+"Um `DocumentConverter` por modo de OCR" mais abaixo para a correção
+completa (as duas pontas: um converter por modo, e `cfg.ocr` de fato
+repassado a `motor.converter()`).
 
 ### Convenção de erros
 

@@ -35,9 +35,12 @@ class TestMotorPool(unittest.TestCase):
     def test_inicializar_nao_carrega_modelos_do_docling_de_forma_eager(self):
         # selecionar_motor() so decide QUAL motor usar; MotorDocling so carrega
         # os modelos de verdade na primeira conversao (._obter_converter()).
+        # rodada 3 (TAREFA-4): um converter por MODO de ocr agora, num dict
+        # (_convs) em vez de um unico _conv - "nao carregou nada ainda" e
+        # o dict vazio, nao None.
         motor = motor_pool.inicializar(m.Config(engine="auto"))
         if motor.nome == "docling":
-            self.assertIsNone(motor._conv)
+            self.assertEqual(motor._convs, {})
 
 
 if __name__ == "__main__":

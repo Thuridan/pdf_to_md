@@ -14,8 +14,21 @@ volta dele. Isso não é um detalhe de implementação incidental; é a decisão
 de arquitetura mais importante do repositório, porque o motor Docling é caro
 de instanciar (carrega layout model + TableFormer + OCR na memória) e lento
 de reinstanciar. Qualquer camada nova adicionada ao projeto herda essa
-restrição: ela precisa reaproveitar uma única instância do motor, nunca criar
-uma por requisição/arquivo.
+restrição: ela precisa reaproveitar as instâncias do motor, nunca criar uma
+por requisição/arquivo.
+
+**Atualização (rodada 3, TAREFA-4): "uma única instância" virou "uma
+instância por modo de OCR"**, não mais uma instância única e exclusiva. O
+motivo é do Docling, não uma escolha nossa: `do_ocr` é campo de
+`PdfPipelineOptions`, fixado na construção do `DocumentConverter` (não é
+argumento de `convert()`), e `DocumentConverter._get_pipeline()` cacheia
+pipelines internamente por hash (`md5` do `model_dump_json()`) das opções —
+`do_ocr` diferente é, para o Docling, um pipeline diferente. Como a rodada 3
+(TAREFA-3) passou a decidir OCR por job (detecção automática de camada de
+texto, com override manual), `MotorDocling` precisa manter um
+`DocumentConverter` por modo (`True`/`False`), não mais um único. Ambos
+continuam preguiçosos — nenhum é criado no startup, só quando um job daquele
+modo aparece pela primeira vez (ver `code.md`/`backend.md` para o código).
 
 ```
                     ┌─────────────────────────┐
@@ -46,13 +59,16 @@ uma por requisição/arquivo.
 | Paralelismo | `--jobs N` (só motor `simples`) | fila sequencial, 1 worker |
 | Motor | escolhido por `--engine` a cada execução | escolhido **uma vez** no startup do processo (`motor_pool`) |
 | Progresso | log linha a linha | polling HTTP + estimativa por página |
-| Reuso do motor | uma instância por *execução* do processo CLI | uma instância por *vida do processo* uvicorn |
+| Reuso do motor | uma instância *por modo de OCR* por execução do processo CLI | uma instância *por modo de OCR* pela vida do processo uvicorn |
 
-A CLI já reaproveitava uma única instância de `DocumentConverter` para todo
-um lote (dentro de uma execução). O backend estende essa mesma garantia para
-a vida inteira do processo: `motor_pool.inicializar()` roda uma vez no
-`lifespan` do FastAPI, e cada job subsequente chama `motor_pool.obter_motor()`
-em vez de recriar o motor.
+A CLI já reaproveitava uma instância de `DocumentConverter` por modo de OCR
+para todo um lote (dentro de uma execução) — na prática, quase sempre uma
+só, porque a CLI decide OCR uma vez por execução (`--ocr`/`--no-ocr`), não
+por arquivo. O backend estende essa mesma garantia para a vida inteira do
+processo: `motor_pool.inicializar()` roda uma vez no `lifespan` do FastAPI, e
+cada job subsequente chama `motor_pool.obter_motor()` em vez de recriar o
+motor — mas como a rodada 3 decide OCR *por job* (TAREFA-3), o processo web
+tende a acumular os dois modos ao longo do tempo, não só um.
 
 ## Fluxo de uma conversão via web
 
@@ -114,6 +130,61 @@ inteira a cada resposta — não há WebSocket nem Server-Sent Events. Ver
   processo. Introduzir um broker externo resolveria um problema que não
   existe aqui (múltiplos workers) e criaria um que não existe hoje
   (persistência entre reinícios).
+
+## Custo de memória por modo de OCR e por documento (rodada 3, TAREFA-4)
+
+Medido no `.venv` de desenvolvimento (Python 3.12.3, `docling` 2.123.1,
+Ubuntu 24.04.4, 62 GiB de RAM), RSS real do processo uvicorn via
+`/proc/<pid>/status`, servidor real rodando (não um mock):
+
+| Cenário | RSS |
+|---|---|
+| (1) Nenhum converter carregado (logo após o startup) | ~51 MB |
+| (2) Só o converter **com** OCR carregado | ~1,49 GB |
+| (3) Só o converter **sem** OCR carregado | ~1,41 GB |
+| (4) Os dois carregados (mesmo processo) | ~1,88 GB |
+
+O item (4) é bem menor que a soma ingênua de (2)+(3) (~2,9 GB) — os dois
+`DocumentConverter`s compartilham bastante memória de baixo nível (runtime
+do PyTorch, bibliotecas, cache de alocador), então manter os dois modos
+vivos no mesmo processo custa bem menos do que dois processos separados,
+um por modo, custariam. Dado relevante para uma futura decisão de pool de
+processos — a rodada 3 não implementa paralelismo, só mede.
+
+**Durante a conversão de um documento real** (não sintético — 20 e 50
+páginas extraídas do miolo do manual de 1310 páginas usado para calibrar a
+detecção de OCR na TAREFA-3, motor `simples` fora, Docling com OCR
+desligado): o RSS **não** cresce de forma discreta por página como a tabela
+acima sugere — ele explode para uma faixa de dezenas de GB assim que a
+conversão começa, dominada por um custo que já aparece quase todo com só 20
+páginas, não crescendo muito mais até 50:
+
+| Páginas convertidas | RSS no pico durante a conversão | RSS após concluir |
+|---|---|---|
+| 20 | ~17,7 GB | ~14,0 GB |
+| 50 | ~19,6 GB | ~15,1 GB |
+
+O RSS não volta ao patamar de antes da conversão (~1,9 GB) depois de
+concluída — fica na casa de 14-15 GB mesmo com o job já `"concluido"`. Não
+foi investigado se isso é o `DoclingDocument`/estruturas internas do
+Docling genuinely retidas, ou só o comportamento normal de alocadores de
+memória (glibc/PyTorch) que não devolvem páginas ociosas ao SO — de
+qualquer forma, é RSS real que o processo mantém.
+
+**Divergência registrada:** a tarefa pede para medir "durante a conversão
+de um documento grande" — a intenção evidente é o documento de 1310 páginas
+usado para calibrar a TAREFA-3. Extrapolando os dois pontos acima (que já
+sugerem um custo dominado por um patamar alto e não-linear, não um
+crescimento pequeno e constante por página), processar as 1310 páginas
+inteiras seria uma aposta arriscada demais para rodar sem supervisão nesta
+máquina compartilhada de 62 GiB — o risco de um OOM real (derrubando outros
+processos da máquina, não só o teste) supera o valor do dado adicional.
+**Não foi executado.** Os dois pontos (20 e 50 páginas) já estabelecem o
+fato mais importante para uma decisão futura de pool de processos: o custo
+por conversão real do Docling é dominado por um patamar de dezenas de GB
+que aparece cedo, não por um crescimento pequeno e previsível por página —
+qualquer dimensionamento de paralelismo baseado em "X MB por página" seria
+otimista demais com os números desta tabela.
 
 ## Persistência (ou a ausência dela)
 

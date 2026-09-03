@@ -77,14 +77,16 @@ class _MotorDeTeste(m.MotorBase):
 
     def __init__(self, *, falha: bool = False, atraso: float = 0.05):
         self.ordem: list[str] = []
+        self.ocr_recebido: list[bool | None] = []
         self._falha = falha
         self._atraso = atraso
 
     def disponivel(self):
         return True, ""
 
-    def converter(self, pdf: Path) -> str:
+    def converter(self, pdf: Path, *, ocr: bool | None = None) -> str:
         self.ordem.append(pdf.name)
+        self.ocr_recebido.append(ocr)
         time.sleep(self._atraso)
         if self._falha:
             raise m.ErroConversao("falha proposital do stub")
@@ -224,6 +226,26 @@ class TestFilaProcessamentoOk(_ComMotorStub):
             self.assertEqual(j1.caminho_saida.read_text(encoding="utf-8"), "# conteudo\n")
             # prova a ordem serial: b so comeca depois que a termina de "processar".
             self.assertEqual(self.motor.ordem, [f"{j1.id}.pdf", f"{j2.id}.pdf"])
+
+    def test_processar_repassa_o_ocr_do_job_ao_motor(self):
+        """TAREFA-3+4 (rodada 3): _processar() monta um Config por job
+        (dataclasses.replace) e converter_arquivo() agora repassa cfg.ocr ao
+        motor - de ponta a ponta, o modo_ocr escolhido no upload precisa
+        chegar ate a chamada real de motor.converter()."""
+        with tempfile.TemporaryDirectory() as tmp:
+            _job_id, caminho1 = jobs.alocar_caminho_pdf(diretorio=Path(tmp))
+            caminho1.write_bytes(b"%PDF-1.4")
+            j1 = jobs.criar_job("a.pdf", caminho1, modo_ocr="sempre")
+
+            _job_id, caminho2 = jobs.alocar_caminho_pdf(diretorio=Path(tmp))
+            caminho2.write_bytes(b"%PDF-1.4")
+            j2 = jobs.criar_job("b.pdf", caminho2, modo_ocr="nunca")
+
+            jobs.enfileirar(j1.id)
+            jobs.enfileirar(j2.id)
+            self.assertTrue(_aguardar(lambda: j2.status == "concluido"))
+
+            self.assertEqual(self.motor.ocr_recebido, [True, False])
 
 
 class TestFilaProcessamentoErro(_ComMotorStub):

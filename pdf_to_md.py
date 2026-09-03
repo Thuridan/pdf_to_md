@@ -119,7 +119,13 @@ class MotorBase:
     def disponivel(self) -> tuple[bool, str]:
         raise NotImplementedError
 
-    def converter(self, pdf: Path) -> str:
+    def converter(self, pdf: Path, *, ocr: bool | None = None) -> str:
+        """`ocr=None` usa o padrao do motor (self.cfg.ocr); um bool explicito
+        sobrepoe SO para esta chamada, sem mutar self.cfg (rodada 3,
+        TAREFA-4: liga o override por job que converter_arquivo() ja
+        calcula em cfg.ocr a este metodo - antes desse parametro existir,
+        converter_arquivo() calculava um Config por job mas nunca o
+        repassava pra ca, entao o override nao tinha efeito algum)."""
         raise NotImplementedError
 
 
@@ -130,7 +136,13 @@ class MotorDocling(MotorBase):
 
     def __init__(self, cfg: Config) -> None:
         self.cfg = cfg
-        self._conv = None  # instanciado sob demanda (carregar modelos e caro)
+        # Um DocumentConverter por MODO DE OCR (True/False), nao um unico
+        # self._conv (rodada 3, TAREFA-4): do_ocr e campo de
+        # PdfPipelineOptions, nao argumento de convert() - trocar OCR por
+        # job exige um converter por modo, cada um com seu proprio
+        # layout+TableFormer carregado. Ambos preguiçosos: nenhum e criado
+        # no startup, so quando um job daquele modo realmente aparece.
+        self._convs: dict[bool, object] = {}  # DocumentConverter (import preguicoso)
 
     def disponivel(self) -> tuple[bool, str]:
         try:
@@ -165,7 +177,7 @@ class MotorDocling(MotorBase):
             return po.TesseractOcrOptions(lang=codigos)
         raise ValueError(f"Motor de OCR desconhecido: {alvo!r}")
 
-    def _opcoes_pipeline(self):
+    def _opcoes_pipeline(self, ocr: bool):
         from docling.datamodel import pipeline_options as po
 
         try:
@@ -195,8 +207,8 @@ class MotorDocling(MotorBase):
                 device=getattr(AcceleratorDevice, base_dev),
             )
 
-        opts.do_ocr = self.cfg.ocr
-        if self.cfg.ocr:
+        opts.do_ocr = ocr
+        if ocr:
             opts.ocr_options = self._opcoes_ocr()
 
         if self.cfg.tables == "none":
@@ -217,25 +229,29 @@ class MotorDocling(MotorBase):
 
         return opts
 
-    def _obter_converter(self):
-        if self._conv is None:
+    def _obter_converter(self, ocr: bool):
+        if ocr not in self._convs:
             from docling.datamodel.base_models import InputFormat
             from docling.document_converter import (
                 DocumentConverter, PdfFormatOption,
             )
 
-            LOG.info("Carregando modelos do Docling (pode demorar na 1a execucao)...")
-            self._conv = DocumentConverter(
+            LOG.info(
+                "Carregando modelos do Docling (modo ocr=%s, pode demorar na 1a "
+                "conversao nesse modo)...", ocr,
+            )
+            self._convs[ocr] = DocumentConverter(
                 format_options={
                     InputFormat.PDF: PdfFormatOption(
-                        pipeline_options=self._opcoes_pipeline()
+                        pipeline_options=self._opcoes_pipeline(ocr)
                     )
                 }
             )
-        return self._conv
+        return self._convs[ocr]
 
-    def converter(self, pdf: Path) -> str:
-        resultado = self._obter_converter().convert(str(pdf))
+    def converter(self, pdf: Path, *, ocr: bool | None = None) -> str:
+        efetivo = self.cfg.ocr if ocr is None else ocr
+        resultado = self._obter_converter(efetivo).convert(str(pdf))
 
         status = getattr(resultado, "status", None)
         rotulo = getattr(status, "value", str(status or "")).lower()
@@ -264,7 +280,9 @@ class MotorSimples(MotorBase):
             return False, f"erro ao inspecionar pypdfium2: {exc}"
         return True, ""
 
-    def converter(self, pdf: Path) -> str:
+    def converter(self, pdf: Path, *, ocr: bool | None = None) -> str:
+        # MotorSimples nunca faz OCR (so le a camada de texto nativa) - o
+        # parametro existe so pra manter a mesma assinatura de MotorBase.
         import pypdfium2 as pdfium
 
         doc = pdfium.PdfDocument(str(pdf))
@@ -569,7 +587,14 @@ def converter_arquivo(pdf: Path, saida: Path, motor: MotorBase, cfg: Config) -> 
 
     inicio = time.perf_counter()
     try:
-        markdown = motor.converter(pdf)
+        # ocr=cfg.ocr explicito (rodada 3, TAREFA-4): antes disso, cfg era
+        # usado so pelas checagens acima (overwrite/dry_run/max_pages) e
+        # NUNCA chegava ao motor - motor.converter(pdf) sempre usava
+        # self.cfg.ocr do proprio motor, fixado na construcao. Pra CLI isso
+        # nao mudava nada (cfg aqui e o MESMO objeto usado pra construir o
+        # motor em selecionar_motor()); pra app web, e o que agora faz o
+        # override por job (jobs._processar) realmente valer.
+        markdown = motor.converter(pdf, ocr=cfg.ocr)
     except ErroConversao as exc:
         return Resultado(pdf, saida, "erro", str(exc), time.perf_counter() - inicio)
     except Exception as exc:
