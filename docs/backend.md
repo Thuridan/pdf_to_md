@@ -194,6 +194,17 @@ concluído do ponto de vista do usuário, mas `resultado.segundos` nesse caso
 é `0.0`; alimentar isso na média móvel faria a estimativa de progresso
 convergir para "instantâneo", o que é falso para as conversões reais.
 
+**Estimativa de duração total** (`Job.to_dict()["estimativa_segundos"]`,
+rodada 3): `paginas_totais × _segundos_por_pagina` — informação neutra,
+exposta sempre que o número de páginas é conhecido (não só durante
+`"processando"`), tanto em `GET /api/jobs` quanto na resposta de
+`POST /api/jobs`. `_amostras_ema` conta quantos jobs já alimentaram a EMA;
+abaixo de `_AMOSTRAS_PARA_CONFIANCA` (3), `estimativa_baixa_confianca` vai
+`true` — logo após subir o processo a EMA vale só o palpite inicial (2s/
+página) e não conhece a máquina. O *banner* de aviso na UI é condicional
+(acima de `AVISO_ESTIMATIVA_MINUTOS`, ver `dependencies.md`); a estimativa
+em si não é.
+
 Como o Docling não expõe um callback nativo por página, "página atual" de um
 job em andamento é uma projeção: `decorrido / segundos_por_pagina`, limitada
 ao total de páginas. `segundos_por_pagina` começa num palpite razoável (2s) e

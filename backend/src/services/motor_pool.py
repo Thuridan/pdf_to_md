@@ -19,8 +19,13 @@ _cfg: m.Config | None = None
 
 # A superficie web recebe arquivo de terceiro - ao contrario da CLI, precisa
 # de um teto por padrao (--max-pages existe desde sempre, mas so a CLI o
-# ligava explicitamente). Documentado em dependencies.md.
-_MAX_PAGINAS_PADRAO = int(os.getenv("MAX_UPLOAD_PAGES", "500"))
+# ligava explicitamente). TAREFA-2 (rodada 3): manuais/documentacao de
+# fornecedor reais tem 1000-2000 paginas com frequencia - 500 rejeitava o
+# caso de uso central. 10000 deixa de ser politica de uso (nao e um limite
+# que o usuario esbarra no trabalho normal) e passa a ser so protecao contra
+# entrada patologica (um PDF de centenas de milhares de paginas, gerado por
+# engano ou de proposito). Documentado em dependencies.md.
+_MAX_PAGINAS_PADRAO = int(os.getenv("MAX_UPLOAD_PAGES", "10000"))
 
 
 def inicializar(cfg: m.Config | None = None) -> m.MotorBase:

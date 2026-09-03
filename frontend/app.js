@@ -13,8 +13,13 @@ const motorPill = document.getElementById("motor-pill");
 const themeToggle = document.getElementById("theme-toggle");
 const appVersionEl = document.getElementById("app-version");
 const conexaoAlertaEl = document.getElementById("conexao-alerta");
+const estimativaAlertaEl = document.getElementById("estimativa-alerta");
 
 let jobsCache = [];
+// Limiar (minutos) acima do qual o banner de estimativa aparece - vem de
+// /api/jobs (AVISO_ESTIMATIVA_MINUTOS no servidor); 30 e so o palpite ate a
+// primeira resposta chegar.
+let avisoEstimativaMinutos = 30;
 
 // --- tema -------------------------------------------------------------
 function aplicarTema(tema) {
@@ -50,6 +55,18 @@ function formatarTamanho(bytes) {
     i += 1;
   }
   return `${valor.toFixed(i === 0 ? 0 : 1)} ${unidades[i]}`;
+}
+
+// Estimativa de duracao (TAREFA-2): "~38 min" pra menos de 1h, "~2h15min"
+// acima disso - documentos reais (1000+ paginas) passam de 1h com frequencia.
+function formatarDuracao(segundos) {
+  if (segundos == null) return null;
+  const minutos = segundos / 60;
+  if (minutos < 1) return "menos de 1 min";
+  if (minutos < 60) return `~${Math.round(minutos)} min`;
+  const horas = Math.floor(minutos / 60);
+  const restoMin = Math.round(minutos % 60);
+  return restoMin > 0 ? `~${horas}h${restoMin}min` : `~${horas}h`;
 }
 
 // --- motor ativo ----------------------------------------------------------
@@ -181,11 +198,23 @@ function metaLinha(job) {
   return partes.join(" · ");
 }
 
+// Sufixo neutro de duracao estimada ("· ~38 min", opcionalmente marcado
+// como estimativa inicial enquanto a EMA nao convergiu) - anexado a linha
+// de na_fila/processando. Sempre exibido quando paginas_totais e conhecido,
+// nao so acima do limiar do banner (esse so controla o AVISO, nao a
+// informacao neutra em si).
+function sufixoEstimativa(job) {
+  const duracao = formatarDuracao(job.estimativa_segundos);
+  if (duracao == null) return "";
+  const marca = job.estimativa_baixa_confianca ? " (estimativa inicial)" : "";
+  return ` · ${duracao}${marca}`;
+}
+
 function blocoEstado(job, totalNaFila) {
   if (job.status === "na_fila") {
     return `
       <div class="badge badge-amber">${ICONE_RELOGIO} Na fila</div>
-      <div class="meta-fina">posição ${job.posicao_na_fila} de ${totalNaFila} na fila</div>
+      <div class="meta-fina">posição ${job.posicao_na_fila} de ${totalNaFila} na fila${sufixoEstimativa(job)}</div>
     `;
   }
   if (job.status === "processando") {
@@ -203,7 +232,7 @@ function blocoEstado(job, totalNaFila) {
     return `
       <div class="badge badge-blue"><span class="spinner"></span> Processando</div>
       ${barra}
-      <div class="meta-fina">${detalhe}</div>
+      <div class="meta-fina">${detalhe}${sufixoEstimativa(job)}</div>
     `;
   }
   if (job.status === "concluido") {
@@ -259,6 +288,26 @@ function renderizarFila() {
     downloadAllBtn.removeAttribute("href");
   }
   clearDoneBtn.disabled = contagens.concluido + contagens.erro === 0;
+
+  // Banner de estimativa (TAREFA-2): so acima do limiar, pra nao virar ruido
+  // quando quase todo documento real (1000+ paginas) o ultrapassa. A
+  // informacao neutra ("~38 min") ja aparece sempre na linha do job -
+  // isso aqui e so o AVISO, quando o pior caso da fila e excepcional.
+  const limiarSegundos = avisoEstimativaMinutos * 60;
+  const jobLento = jobsCache.find(
+    (j) =>
+      (j.status === "na_fila" || j.status === "processando") &&
+      j.estimativa_segundos != null &&
+      j.estimativa_segundos > limiarSegundos
+  );
+  if (jobLento) {
+    estimativaAlertaEl.textContent =
+      `"${jobLento.nome_original}" deve levar ${formatarDuracao(jobLento.estimativa_segundos)} ` +
+      `(acima de ${avisoEstimativaMinutos} min) - considere rodar fora do horário de pico.`;
+    estimativaAlertaEl.hidden = false;
+  } else {
+    estimativaAlertaEl.hidden = true;
+  }
 
   // jobsList.innerHTML = ... recria a lista inteira a cada poll (1.5s), o que
   // destroi qualquer elemento focado dentro dela - quem navega ate um botao
@@ -324,6 +373,9 @@ async function atualizarFila() {
     const dados = await resp.json();
     if (seq !== seqAtual) return;
     jobsCache = dados.jobs || [];
+    if (dados.aviso_estimativa_minutos != null) {
+      avisoEstimativaMinutos = dados.aviso_estimativa_minutos;
+    }
     renderizarFila();
     marcarSucessoDePoll();
   } catch (e) {

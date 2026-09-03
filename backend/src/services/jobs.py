@@ -38,6 +38,11 @@ _parar_evento = threading.Event()
 _SEGUNDOS_POR_PAGINA_PADRAO = 2.0
 _ALPHA_EMA = 0.3
 _segundos_por_pagina = _SEGUNDOS_POR_PAGINA_PADRAO
+# Quantos jobs ja alimentaram a EMA - logo apos subir o processo ela vale so
+# o palpite inicial (2s/pagina) e nao conhece a maquina; abaixo deste limiar
+# a estimativa derivada dela e marcada como baixa confianca (TAREFA-2).
+_AMOSTRAS_PARA_CONFIANCA = 3
+_amostras_ema = 0
 
 
 @dataclass
@@ -67,6 +72,16 @@ class Job:
         elif self.status == "concluido" and self.paginas_totais:
             pagina_estimada = float(self.paginas_totais)
 
+        # Estimativa de duracao total (TAREFA-2): informacao neutra, sempre
+        # exposta quando o numero de paginas e conhecido - e o frontend quem
+        # decide onde exibi-la (na_fila/processando) e se aciona o banner de
+        # aviso acima do limiar configuravel. "Baixa confianca" enquanto
+        # poucos jobs alimentaram a EMA - logo apos subir o processo ela
+        # vale so o palpite inicial e nao conhece a maquina.
+        estimativa_segundos: float | None = None
+        if self.paginas_totais:
+            estimativa_segundos = self.paginas_totais * _segundos_por_pagina
+
         dados = {
             "id": self.id,
             "nome_original": self.nome_original,
@@ -76,6 +91,8 @@ class Job:
             "tamanho_bytes": self.tamanho_bytes,
             "pagina_estimada": pagina_estimada,
             "estimado": estimado,
+            "estimativa_segundos": estimativa_segundos,
+            "estimativa_baixa_confianca": _amostras_ema < _AMOSTRAS_PARA_CONFIANCA,
             "mensagem_erro": self.mensagem_erro or None,
         }
         if posicao_na_fila is not None:
@@ -255,11 +272,12 @@ def obter_com_progresso(job_id: str) -> dict | None:
 
 def _atualizar_estimativa(job: Job) -> None:
     """Ajusta a media movel de segundos/pagina com o resultado de um job concluido."""
-    global _segundos_por_pagina
+    global _segundos_por_pagina, _amostras_ema
     if not job.paginas_totais:
         return
     observado = job.segundos / job.paginas_totais
     _segundos_por_pagina = _ALPHA_EMA * observado + (1 - _ALPHA_EMA) * _segundos_por_pagina
+    _amostras_ema += 1
 
 
 def _processar(job_id: str) -> None:

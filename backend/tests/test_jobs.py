@@ -115,6 +115,7 @@ class _ComMotorStub(unittest.TestCase):
         self._motor_original = motor_pool._motor
         self._cfg_original = motor_pool._cfg
         self._ema_original = jobs._segundos_por_pagina
+        self._amostras_original = jobs._amostras_ema
         self.motor = _MotorDeTeste(falha=self.falha)
         motor_pool._motor = self.motor
         motor_pool._cfg = m.Config()
@@ -125,6 +126,7 @@ class _ComMotorStub(unittest.TestCase):
         motor_pool._motor = self._motor_original
         motor_pool._cfg = self._cfg_original
         jobs._segundos_por_pagina = self._ema_original
+        jobs._amostras_ema = self._amostras_original
 
 
 class TestPararWorkerComBacklog(unittest.TestCase):
@@ -477,10 +479,13 @@ class TestCriarJobPaginas(unittest.TestCase):
 class TestProgressoDict(unittest.TestCase):
     def setUp(self):
         self._ema_original = jobs._segundos_por_pagina
+        self._amostras_original = jobs._amostras_ema
         jobs._segundos_por_pagina = 2.0
+        jobs._amostras_ema = 0
 
     def tearDown(self):
         jobs._segundos_por_pagina = self._ema_original
+        jobs._amostras_ema = self._amostras_original
 
     def test_na_fila_reporta_total_de_paginas_sem_estimativa(self):
         job = jobs.Job(id="1", nome_original="a.pdf", caminho_pdf=Path("a.pdf"), paginas_totais=10)
@@ -488,6 +493,33 @@ class TestProgressoDict(unittest.TestCase):
         self.assertIsNone(dados["pagina_estimada"])
         self.assertFalse(dados["estimado"])
         self.assertEqual(dados["paginas_totais"], 10)
+
+    def test_estimativa_de_duracao_sempre_presente_quando_paginas_conhecidas(self):
+        """TAREFA-2: estimativa_segundos = paginas x segundos_por_pagina,
+        informacao neutra sempre exposta (independente do status), nao so
+        quando 'processando'."""
+        for status in ("na_fila", "processando", "concluido", "erro"):
+            with self.subTest(status=status):
+                job = jobs.Job(
+                    id="1", nome_original="a.pdf", caminho_pdf=Path("a.pdf"),
+                    status=status, paginas_totais=10,
+                    iniciado_em=datetime.now(timezone.utc) if status == "processando" else None,
+                )
+                dados = job.to_dict()
+                self.assertEqual(dados["estimativa_segundos"], 20.0)  # 10 paginas * 2.0 s/pagina
+
+    def test_sem_paginas_totais_nao_ha_estimativa_de_duracao(self):
+        job = jobs.Job(id="1", nome_original="a.pdf", caminho_pdf=Path("a.pdf"), paginas_totais=None)
+        self.assertIsNone(job.to_dict()["estimativa_segundos"])
+
+    def test_estimativa_baixa_confianca_antes_de_3_amostras(self):
+        job = jobs.Job(id="1", nome_original="a.pdf", caminho_pdf=Path("a.pdf"), paginas_totais=10)
+
+        jobs._amostras_ema = 2
+        self.assertTrue(job.to_dict()["estimativa_baixa_confianca"])
+
+        jobs._amostras_ema = 3
+        self.assertFalse(job.to_dict()["estimativa_baixa_confianca"])
 
     def test_processando_estima_pagina_por_tempo_decorrido(self):
         agora = datetime.now(timezone.utc)
@@ -532,9 +564,12 @@ class TestProgressoDict(unittest.TestCase):
 class TestAtualizarEstimativa(unittest.TestCase):
     def setUp(self):
         self._ema_original = jobs._segundos_por_pagina
+        self._amostras_original = jobs._amostras_ema
+        jobs._amostras_ema = 0
 
     def tearDown(self):
         jobs._segundos_por_pagina = self._ema_original
+        jobs._amostras_ema = self._amostras_original
 
     def test_media_movel_se_aproxima_do_tempo_observado(self):
         jobs._segundos_por_pagina = 2.0
@@ -554,6 +589,25 @@ class TestAtualizarEstimativa(unittest.TestCase):
         )
         jobs._atualizar_estimativa(job)
         self.assertEqual(jobs._segundos_por_pagina, 2.0)
+
+    def test_amostras_ema_incrementa_so_com_paginas_totais(self):
+        """TAREFA-2: a estimativa e marcada 'baixa confianca' enquanto
+        poucos jobs alimentaram a EMA - o contador so deve andar quando a
+        media de fato mudou."""
+        job_com_paginas = jobs.Job(
+            id="1", nome_original="a.pdf", caminho_pdf=Path("a.pdf"),
+            paginas_totais=10, segundos=10.0,
+        )
+        job_sem_paginas = jobs.Job(
+            id="2", nome_original="b.pdf", caminho_pdf=Path("b.pdf"),
+            paginas_totais=None, segundos=5.0,
+        )
+        jobs._atualizar_estimativa(job_sem_paginas)
+        self.assertEqual(jobs._amostras_ema, 0)
+        jobs._atualizar_estimativa(job_com_paginas)
+        self.assertEqual(jobs._amostras_ema, 1)
+        jobs._atualizar_estimativa(job_com_paginas)
+        self.assertEqual(jobs._amostras_ema, 2)
 
 
 class TestPosicaoNaFila(unittest.TestCase):

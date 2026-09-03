@@ -261,6 +261,12 @@ html[data-theme="dark"] .toggle-tema .icone-lua { display: block; }
   font-size: 12.5px; font-weight: 600; text-align: center;
 }
 
+.alerta-estimativa {
+  padding: 10px 16px; border-radius: 10px;
+  background: var(--amber-bg); color: var(--amber);
+  font-size: 12.5px; font-weight: 600; text-align: center;
+}
+
 @media (max-width: 640px) {
   .bloco-estado { width: 100%; }
   .linha-job { flex-wrap: wrap; }

@@ -486,9 +486,15 @@ def converter_arquivo(pdf: Path, saida: Path, motor: MotorBase, cfg: Config) -> 
                 "nao foi possivel pre-checar o numero de paginas",
             )
         if paginas is not None and paginas > cfg.max_pages:
+            # max_pages e usado tanto pela CLI (--max-pages, opt-in) quanto
+            # pela app web (MAX_UPLOAD_PAGES, ligado por padrao como teto de
+            # protecao contra entrada patologica - nao politica de uso: ver
+            # dependencies.md). A mensagem nomeia os dois ajustes porque essa
+            # funcao nao sabe qual interface a chamou.
             return Resultado(
                 pdf, saida, "erro",
-                f"{paginas} paginas excede --max-pages {cfg.max_pages}",
+                f"{paginas} paginas excede o teto de protecao max_pages={cfg.max_pages} "
+                "(ajustavel via --max-pages na CLI ou MAX_UPLOAD_PAGES na app web)",
             )
 
     inicio = time.perf_counter()

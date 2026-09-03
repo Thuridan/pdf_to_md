@@ -855,6 +855,27 @@ class TestMaxPages(BaseTemp):
         self.assertEqual(rc, m.EXIT_FALHA)
         self.assertFalse(saida.exists())
 
+    def test_mensagem_de_excesso_nomeia_os_dois_ajustes(self):
+        """TAREFA-2 (rodada 3): a mensagem antiga so citava --max-pages (flag
+        da CLI) - confusa vinda da app web, que ajusta o mesmo max_pages via
+        MAX_UPLOAD_PAGES. converter_arquivo() nao sabe qual interface a
+        chamou, entao a mensagem cita as duas e se descreve como teto de
+        protecao, nao politica de uso."""
+        pdf = gerar_pdf(self.tmp / "grande.pdf", ["linha"], paginas=5)
+        saida = self.tmp / "grande.md"
+
+        class MotorNuncaChamado(m.MotorBase):
+            nome = "stub"
+            def disponivel(self): return True, ""
+            def converter(self, pdf): raise AssertionError("nao deveria converter")
+
+        resultado = m.converter_arquivo(pdf, saida, MotorNuncaChamado(), m.Config(max_pages=3))
+        self.assertEqual(resultado.status, "erro")
+        self.assertIn("max_pages=3", resultado.mensagem)
+        self.assertIn("--max-pages", resultado.mensagem)
+        self.assertIn("MAX_UPLOAD_PAGES", resultado.mensagem)
+        self.assertIn("teto de protecao", resultado.mensagem)
+
     def test_permite_pdf_dentro_do_limite(self):
         pdf = gerar_pdf(self.tmp / "pequeno.pdf", ["linha"], paginas=2)
         saida = self.tmp / "pequeno.md"

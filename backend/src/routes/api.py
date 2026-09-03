@@ -21,10 +21,20 @@ router = APIRouter()
 # Superficie web = entrada de terceiro, ao contrario da CLI. Sem teto, um
 # unico upload grande o bastante estoura a memoria do processo, e um lote
 # grande o bastante ocupa a thread worker unica por muito tempo. Documentado
-# em dependencies.md.
-MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", str(100 * 1024 * 1024)))
+# em dependencies.md. TAREFA-2 (rodada 3): manuais/documentacao de fornecedor
+# reais chegam a centenas de MB - 100 MiB rejeitava o caso de uso central;
+# 500 MB e o valor definido pelo usuario (grava direto em disco em blocos
+# desde a TAREFA-1, entao o teto nao vira estouro de memoria).
+MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", str(500 * 1000 * 1000)))
 MAX_UPLOAD_ARQUIVOS = int(os.getenv("MAX_UPLOAD_FILES", "50"))
 _TAMANHO_BLOCO = 1024 * 1024
+
+# TAREFA-2 (rodada 3): a estimativa de duracao (Job.to_dict()) e sempre
+# exibida na linha do job como informacao neutra; o AVISO visivel (banner)
+# so aparece quando a estimativa de ALGUM job na fila ultrapassa este
+# limiar - um limiar baixo vira ruido quando quase todo documento real (1000+
+# paginas) o ultrapassa, e aviso que aparece sempre e aviso que ninguem le.
+AVISO_ESTIMATIVA_MINUTOS = int(os.getenv("AVISO_ESTIMATIVA_MINUTOS", "30"))
 
 
 def _nome_saida_seguro(nome_original: str, job_id: str) -> str:
@@ -125,7 +135,10 @@ async def criar_jobs(files: list[UploadFile] = File(...)) -> dict:
 
 @router.get("/api/jobs")
 def listar_jobs() -> dict:
-    return {"jobs": jobs.listar_com_progresso()}
+    return {
+        "jobs": jobs.listar_com_progresso(),
+        "aviso_estimativa_minutos": AVISO_ESTIMATIVA_MINUTOS,
+    }
 
 
 @router.get("/api/jobs/{job_id}")

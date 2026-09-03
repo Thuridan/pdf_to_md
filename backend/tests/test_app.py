@@ -160,6 +160,24 @@ class TestCriarJobsEndpoint(unittest.TestCase):
         ids = [j["id"] for j in resposta.json()["jobs"]]
         self.assertIn(criado["id"], ids)
 
+    def test_listar_jobs_expoe_o_limiar_de_aviso_de_estimativa(self):
+        """TAREFA-2: o frontend precisa do limiar (env AVISO_ESTIMATIVA_MINUTOS)
+        pra decidir quando mostrar o banner - nao ha como ele ler a variavel
+        de ambiente do servidor diretamente."""
+        with TestClient(app) as cliente:
+            resposta = cliente.get("/api/jobs")
+        self.assertEqual(resposta.json()["aviso_estimativa_minutos"], api.AVISO_ESTIMATIVA_MINUTOS)
+
+    def test_criados_incluem_estimativa_de_duracao(self):
+        with TestClient(app) as cliente:
+            corpo = cliente.post(
+                "/api/jobs",
+                files={"files": ("relatorio.pdf", b"%PDF-1.4", "application/pdf")},
+            ).json()
+        criado = corpo["criados"][0]
+        self.assertIn("estimativa_segundos", criado)
+        self.assertIn("estimativa_baixa_confianca", criado)
+
     def test_obter_job_por_id_devolve_status_e_progresso(self):
         with TestClient(app) as cliente:
             criado = cliente.post(
