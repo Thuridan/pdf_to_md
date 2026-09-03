@@ -738,11 +738,31 @@ class TestMaxPages(BaseTemp):
         rc = m.main(["--engine", "simples", "-q", "-i", str(pdf), "--max-pages", "0"])
         self.assertEqual(rc, m.EXIT_USO)
 
-    def test_pdf_corrompido_ainda_falha_por_conta_do_motor(self):
-        """A pre-checagem nao bloqueia PDF ilegivel; quem reporta o erro e o motor real."""
+    def test_pdf_corrompido_com_max_pages_ativo_e_bloqueado_pela_pre_checagem(self):
+        """BUG-04: PDF ilegivel pelo pypdfium2 (nao "biblioteca ausente") tinha o
+        --max-pages descartado (contar_paginas devolvia None nos dois casos),
+        entao o arquivo seguia para o motor pesado mesmo acima do limite
+        pretendido. Com --max-pages ativo, PDF ilegivel agora e bloqueado pela
+        propria pre-checagem, sem chegar a acionar o motor real."""
         ruim = self.tmp / "ruim.pdf"
         ruim.write_bytes(b"%PDF-1.4 lixo nao e um pdf valido")
-        rc = m.main(["--engine", "simples", "-q", "-i", str(ruim), "--max-pages", "1"])
+        saida = self.tmp / "ruim.md"
+        motor = MotorFake()
+        cfg = m.Config(max_pages=1)
+
+        resultado = m.converter_arquivo(ruim, saida, motor, cfg)
+
+        self.assertEqual(resultado.status, "erro")
+        self.assertIn("pre-checar", resultado.mensagem)
+        self.assertEqual(motor.chamadas, [])
+        self.assertFalse(saida.exists())
+
+    def test_pdf_corrompido_sem_max_pages_ainda_falha_por_conta_do_motor(self):
+        """Sem --max-pages, contar_paginas nunca e chamado - PdfIlegivel so
+        existe para o caminho ativado por cfg.max_pages."""
+        ruim = self.tmp / "ruim.pdf"
+        ruim.write_bytes(b"%PDF-1.4 lixo nao e um pdf valido")
+        rc = m.main(["--engine", "simples", "-q", "-i", str(ruim)])
         self.assertEqual(rc, m.EXIT_FALHA)
 
     def test_contar_paginas_sem_pypdfium2_retorna_none_e_avisa_uma_vez(self):

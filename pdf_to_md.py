@@ -103,6 +103,16 @@ class ErroConversao(RuntimeError):
     """Falha ao converter um documento especifico."""
 
 
+class PdfIlegivel(RuntimeError):
+    """contar_paginas() nao conseguiu abrir o PDF com o pypdfium2 instalado.
+
+    Distinto de "biblioteca ausente" (que devolve None e segue permissivo):
+    aqui o pypdfium2 esta disponivel e ainda assim rejeitou o arquivo, o que
+    e sinal de PDF corrompido/adversarial - com --max-pages ativo, o
+    chamador deve tratar isso como falha em vez de pular a pre-checagem.
+    """
+
+
 class MotorBase:
     nome = "base"
 
@@ -417,9 +427,11 @@ _AVISO_MAX_PAGES_EMITIDO = False
 def contar_paginas(pdf: Path) -> int | None:
     """Conta paginas de forma barata, sem carregar os modelos pesados.
 
-    Devolve None se nao for possivel checar (pypdfium2 ausente ou PDF
-    ilegivel) - nesse caso o chamador deve pular a pre-checagem e deixar o
-    motor de conversao real reportar o erro, se houver.
+    Devolve None se a biblioteca pypdfium2 nao estiver instalada (pre-checagem
+    pulada, aviso emitido uma vez) - esse caso e permissivo de proposito.
+    Levanta PdfIlegivel se o pypdfium2 estiver instalado mas nao conseguir
+    abrir o arquivo; esse caso NAO deve ser tratado como "pular a
+    pre-checagem" (ver converter_arquivo).
     """
     global _AVISO_MAX_PAGES_EMITIDO
     try:
@@ -439,8 +451,8 @@ def contar_paginas(pdf: Path) -> int | None:
             return len(doc)
         finally:
             doc.close()
-    except Exception:
-        return None
+    except Exception as exc:
+        raise PdfIlegivel(f"pypdfium2 nao conseguiu abrir o PDF: {exc}") from exc
 
 
 def escrever_atomico(destino: Path, conteudo: str) -> None:
@@ -466,7 +478,13 @@ def converter_arquivo(pdf: Path, saida: Path, motor: MotorBase, cfg: Config) -> 
         return Resultado(pdf, saida, "ok", "simulado (--dry-run)")
 
     if cfg.max_pages is not None:
-        paginas = contar_paginas(pdf)
+        try:
+            paginas = contar_paginas(pdf)
+        except PdfIlegivel:
+            return Resultado(
+                pdf, saida, "erro",
+                "nao foi possivel pre-checar o numero de paginas",
+            )
         if paginas is not None and paginas > cfg.max_pages:
             return Resultado(
                 pdf, saida, "erro",

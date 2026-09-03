@@ -124,8 +124,13 @@ def criar_job(nome_original: str, conteudo: bytes, *, diretorio: Path | None = N
     caminho = alvo / f"{job_id}.pdf"
     caminho.write_bytes(conteudo)
     # Checagem barata (pypdfium2, sem carregar modelos) - mesma usada por --max-pages
-    # na CLI. Devolve None se o PDF nao puder ser aberto; o motor real reporta o erro.
-    paginas = m.contar_paginas(caminho)
+    # na CLI, mas aqui e so para estimar progresso na UI: um PDF ilegivel pelo
+    # pypdfium2 (m.PdfIlegivel) vira paginas_totais=None em vez de propagar -
+    # quem decide se isso e motivo de erro e converter_arquivo(), via cfg.max_pages.
+    try:
+        paginas = m.contar_paginas(caminho)
+    except m.PdfIlegivel:
+        paginas = None
     job = Job(
         id=job_id,
         nome_original=nome_original,
