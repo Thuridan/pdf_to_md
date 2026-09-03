@@ -442,6 +442,57 @@ presentes e buscáveis.
 deste achado, e a rodada de memória/qualidade seguinte para decidir se
 `traverse_pictures=True` vira o padrão do projeto.
 
+### Achatamento de spans em tabelas no Markdown (rodada 5, TAREFA-8)
+
+**Medição e registro — nenhuma mudança no formato de saída.** Markdown não
+tem sintaxe de span de célula; o serializador do `docling_core` escreve o
+texto da célula mesclada só na posição de origem e deixa as posições
+cobertas pelo span vazias (comportamento documentado na própria doc de
+serialização do Docling). `export_to_html()`/`export_to_dict()` preservam
+`row_span`/`col_span` — Markdown não.
+
+**Método:** amostra real de 70 páginas, espalhada pelo `teste.pdf`
+inteiro (1310 páginas) — 5 páginas a cada 100, não um trecho contínuo, para
+não enviesar pela estrutura local de uma única seção. Contagem de células
+com `row_span > 1` ou `col_span > 1` via `TableItem.data.table_cells`
+(`DoclingDocument` real, não amostragem do `.md`).
+
+**Resultado:** 42 tabelas na amostra, **2 com pelo menos uma célula com
+span (4,8%)** — proporção baixa. Mas o efeito, quando ocorre, não é uma
+célula vazia inofensiva — é **realinhamento silencioso da linha inteira**.
+Exemplo real (página 10 da amostra, tabela de privilégios de relatório):
+a célula mesclada (`colspan="2"`, cobrindo "Access Level" + o começo de
+"Description") vira, no Markdown achatado, uma única célula na coluna
+"Access Level" com o texto `"Authentication Specifies whether the
+administrator can create a"` — nome do nível de acesso ("Authentication")
+grudado no INÍCIO da descrição real. A coluna "Description" da mesma linha
+fica com só o resto do texto: `"custom report that includes data from the
+Authentication logs."`. A linha continua com 6 células (o número certo de
+colunas) — não há nada estruturalmente quebrado para alertar quem lê — mas
+o conteúdo de duas colunas está migrado, silenciosamente. Comparação HTML
+lado a lado (mesma tabela, mesma linha):
+
+```html
+<td colspan="2">Authentication Specifies whether the administrator can create a</td>
+<td>custom report that includes data from the Authentication logs.</td>
+```
+
+Isso é exatamente o risco que motivou a tarefa: alguém perguntando "qual o
+nível de acesso de X" a partir do Markdown teria a resposta certa
+misturada com a descrição errada, com aparência de tabela válida — falha
+silenciosa, sem erro visível em lugar nenhum.
+
+**Leitura:** a proporção medida (4,8%) é baixa o bastante para não virar
+decisão de produto imediata (limiar do próprio prompt: "se a proporção for
+baixa, registra-se e segue") — mas a amostra é de 70 páginas de 1310
+(5,3%), não exaustiva, e o efeito por ocorrência é sério o bastante
+(resposta errada com aparência de certa, num manual de referência) para
+que qualquer decisão futura sobre exportar HTML junto do `.md` (opção A) ou
+escrever um `TableSerializer` que repita o valor nas células cobertas em
+vez de deixá-las vazias (opção B) mereça uma amostra maior antes de
+descartar o problema como raro. Não implementado nesta rodada, por
+instrução explícita.
+
 ### Convenção de erros
 
 - **`404`** — recurso (job) não existe no `JobStore`.
