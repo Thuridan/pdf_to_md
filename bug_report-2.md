@@ -135,4 +135,15 @@ Registrado aqui por instrução explícita de `bugs-2.md`: isolamento por usuár
 
 ### Problemas encontrados durante a execução que não constam em `bugs-2.md`
 
-Nenhum. A revisão desta rodada ficou dentro do escopo declarado (`bug_report.md` e os trechos de código que ele cita) e não revelou divergências entre o relatório e o código real, nem problemas novos fora dos 4 itens listados.
+> **Errata (rodada 3, TAREFA-7):** esta seção dizia "Nenhum", o que
+> contradizia o próprio detalhe do BUG-24 (acima) — corrigido aqui, só o
+> registro, nenhum código alterado nesta correção.
+
+Um: verificando o BUG-24, as contagens de teste em `README.md` e
+`architecture.md` (`76 testes`/`52 testes`) estavam desatualizadas em
+relação à suíte real (na época, já `87`/`71` depois das correções da
+própria rodada 2) — achado fora dos 4 itens de `bugs-2.md`, corrigido na
+mesma passada do BUG-24 (commit `096fb2e`, ver seu detalhe acima) em vez de
+registrado como item avulso. Fora isso, a revisão desta rodada ficou dentro
+do escopo declarado (`bug_report.md` e os trechos de código que ele cita) e
+não revelou outras divergências entre o relatório e o código real.
