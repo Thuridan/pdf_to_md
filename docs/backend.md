@@ -285,6 +285,37 @@ implementação, por instrução explícita do prompt desta rodada:
 
 Este item é insumo para a rodada de memória; não foi antecipado.
 
+### Graus de confiança do Docling (rodada 5, TAREFA-3)
+
+O Docling calcula um `confidence` (`ConfidenceReport`) por conversão desde
+a v2.34.0: quatro escores por página (`layout_score`, `ocr_score`,
+`parse_score`, `table_score` — este último ainda não implementado na
+versão instalada) agregados em graus (`POOR`/`FAIR`/`GOOD`/`EXCELLENT`),
+tanto por documento quanto por página (`confidence.pages`, um dict indexado
+pelo número real da página — verificado num extrato real de 46 páginas do
+`teste.pdf`: chaves `1..46`, o mesmo índice de `_marcador_pagina()` da
+TAREFA-1). `_extrair_confianca()` em `pdf_to_md.py` lê **só os graus**
+(`mean_grade`), nunca os escores numéricos — a própria documentação do
+Docling recomenda isso, porque o cálculo/ponderação dos escores pode mudar
+entre versões. "Página com grau baixo" = `mean_grade` da página abaixo de
+`GOOD` (`POOR` ou `FAIR`) — a leitura mais direta de "esta página pode
+precisar de revisão manual".
+
+`MotorBase.converter()` passou a devolver `ResultadoMotor` (markdown +
+`grau_medio` + `paginas_grau_baixo`) em vez de só a string — `MotorSimples`
+não roda o pipeline do Docling, então sempre devolve `grau_medio=None`.
+`converter_arquivo()` repassa os dois campos para `Resultado`;
+`jobs._processar()` copia de `Resultado` para `Job.grau_medio`/
+`Job.paginas_grau_baixo`, expostos por `to_dict()`. Grau baixo **nunca**
+vira erro — é sinalizado (log de aviso na CLI, campo visível no job na
+API/frontend), a conversão segue utilizável.
+
+Medido no mesmo extrato real de 46 páginas: grau do documento
+`excellent` (`mean_score` ≈ 0,92), com **1 de 46 páginas** em `fair`
+(página 39 da faixa) — nenhuma em `poor`. Consistente com a natureza do
+documento (nativo, texto rico) e útil como prova de que o sinal distingue
+páginas de fato: as outras 45 páginas ficaram `excellent`/`good`.
+
 ### Convenção de erros
 
 - **`404`** — recurso (job) não existe no `JobStore`.

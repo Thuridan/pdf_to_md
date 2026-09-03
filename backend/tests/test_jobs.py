@@ -75,22 +75,30 @@ class _MotorDeTeste(m.MotorBase):
 
     nome = "stub"
 
-    def __init__(self, *, falha: bool = False, atraso: float = 0.05):
+    def __init__(
+        self, *, falha: bool = False, atraso: float = 0.05,
+        grau_medio: str | None = None, paginas_grau_baixo: list[int] | None = None,
+    ):
         self.ordem: list[str] = []
         self.ocr_recebido: list[bool | None] = []
         self._falha = falha
         self._atraso = atraso
+        self._grau_medio = grau_medio
+        self._paginas_grau_baixo = paginas_grau_baixo or []
 
     def disponivel(self):
         return True, ""
 
-    def converter(self, pdf: Path, *, ocr: bool | None = None) -> str:
+    def converter(self, pdf: Path, *, ocr: bool | None = None) -> m.ResultadoMotor:
         self.ordem.append(pdf.name)
         self.ocr_recebido.append(ocr)
         time.sleep(self._atraso)
         if self._falha:
             raise m.ErroConversao("falha proposital do stub")
-        return "# conteudo\n"
+        return m.ResultadoMotor(
+            markdown="# conteudo\n", grau_medio=self._grau_medio,
+            paginas_grau_baixo=self._paginas_grau_baixo,
+        )
 
 
 class TestCriarJob(unittest.TestCase):
@@ -128,6 +136,8 @@ class _ComMotorStub(unittest.TestCase):
     """Base: substitui o motor do motor_pool por um stub e sobe/derruba o worker."""
 
     falha = False
+    grau_medio: str | None = None
+    paginas_grau_baixo: list[int] | None = None
 
     def setUp(self):
         self._motor_original = motor_pool._motor
@@ -136,7 +146,10 @@ class _ComMotorStub(unittest.TestCase):
         # salvar, senao "original" e o MESMO dict que os testes mutam.
         self._ema_original = jobs._segundos_por_pagina.copy()
         self._amostras_original = jobs._amostras_ema.copy()
-        self.motor = _MotorDeTeste(falha=self.falha)
+        self.motor = _MotorDeTeste(
+            falha=self.falha, grau_medio=self.grau_medio,
+            paginas_grau_baixo=self.paginas_grau_baixo,
+        )
         motor_pool._motor = self.motor
         motor_pool._cfg = m.Config()
         jobs.iniciar_worker()
@@ -248,6 +261,37 @@ class TestFilaProcessamentoOk(_ComMotorStub):
             self.assertTrue(_aguardar(lambda: j2.status == "concluido"))
 
             self.assertEqual(self.motor.ocr_recebido, [True, False])
+
+
+class TestGrauDeConfianca(_ComMotorStub):
+    """Rodada 5, TAREFA-3: o Job guarda e to_dict() expoe o grau que o
+    ResultadoMotor devolveu."""
+
+    grau_medio = "fair"
+    paginas_grau_baixo = [3, 7]
+
+    def test_job_guarda_grau_e_paginas_baixas(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            job = _escrever_e_criar_job("a.pdf", b"%PDF-1.4", diretorio=Path(tmp))
+            jobs.enfileirar(job.id)
+            self.assertTrue(_aguardar(lambda: job.status == "concluido"))
+
+            self.assertEqual(job.grau_medio, "fair")
+            self.assertEqual(job.paginas_grau_baixo, [3, 7])
+            dados = job.to_dict()
+            self.assertEqual(dados["grau_medio"], "fair")
+            self.assertEqual(dados["paginas_grau_baixo"], [3, 7])
+
+
+class TestSemGrauDeConfianca(_ComMotorStub):
+    def test_grau_none_fica_none_no_to_dict(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            job = _escrever_e_criar_job("a.pdf", b"%PDF-1.4", diretorio=Path(tmp))
+            jobs.enfileirar(job.id)
+            self.assertTrue(_aguardar(lambda: job.status == "concluido"))
+
+            self.assertIsNone(job.to_dict()["grau_medio"])
+            self.assertEqual(job.to_dict()["paginas_grau_baixo"], [])
 
 
 class TestFilaProcessamentoErro(_ComMotorStub):

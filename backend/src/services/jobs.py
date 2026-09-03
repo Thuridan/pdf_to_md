@@ -78,6 +78,11 @@ class Job:
     # pior que o esperado. Ver criar_job(modo_ocr=...).
     ocr: bool = True
     ocr_origem: str = "detectado"  # "detectado" | "forcado"
+    # Rodada 5, TAREFA-3: graus de confianca do Docling (None/[] antes de
+    # concluir, ou se o motor nao os expoe - ver ResultadoMotor em
+    # pdf_to_md.py). NAO vira erro - so um sinal pra quem for revisar.
+    grau_medio: str | None = None
+    paginas_grau_baixo: list[int] = field(default_factory=list)
 
     def to_dict(self, *, posicao_na_fila: int | None = None) -> dict:
         # EMA do MODO deste job especificamente (TAREFA-5) - OCR e sem-OCR
@@ -120,6 +125,8 @@ class Job:
             "estimativa_baixa_confianca": _amostras_ema[self.ocr] < _AMOSTRAS_PARA_CONFIANCA,
             "ocr": self.ocr,
             "ocr_origem": self.ocr_origem,
+            "grau_medio": self.grau_medio,
+            "paginas_grau_baixo": self.paginas_grau_baixo,
             "mensagem_erro": self.mensagem_erro or None,
         }
         if posicao_na_fila is not None:
@@ -363,6 +370,8 @@ def _processar(job_id: str) -> None:
 
     resultado = m.converter_arquivo(job.caminho_pdf, saida, motor, cfg)
     job.segundos = resultado.segundos
+    job.grau_medio = resultado.grau_medio
+    job.paginas_grau_baixo = resultado.paginas_grau_baixo
     if resultado.status in ("ok", "pulado"):
         # "pulado" (saida.md ja existia, overwrite desligado) nao e uma falha
         # do ponto de vista do usuario: o arquivo que ele queria ja esta la.

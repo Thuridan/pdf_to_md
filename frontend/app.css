@@ -217,6 +217,7 @@ html[data-theme="dark"] .toggle-tema .icone-lua { display: block; }
 }
 .meta-fina { font-size: 12px; color: var(--text-faint); }
 .meta-erro { color: var(--red); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.meta-aviso { color: var(--amber); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 .bloco-estado { width: 300px; flex: none; display: flex; flex-direction: column; gap: 6px; }
 .linha-topo { display: flex; align-items: center; justify-content: space-between; }

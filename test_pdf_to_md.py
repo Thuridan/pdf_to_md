@@ -81,8 +81,19 @@ def gerar_documento_com_figuras(tamanhos_pts: list[tuple[float, float]]):
     return doc
 
 
+def fake_confianca(mean_grade: str, paginas: dict[int, str]):
+    """Fake minimo de ConfidenceReport - so o que _extrair_confianca() le
+    (mean_grade do documento, e mean_grade por pagina em .pages)."""
+    grau_doc = types.SimpleNamespace(value=mean_grade)
+    pags = {
+        n: types.SimpleNamespace(mean_grade=types.SimpleNamespace(value=g))
+        for n, g in paginas.items()
+    }
+    return types.SimpleNamespace(mean_grade=grau_doc, pages=pags)
+
+
 def instalar_stub_docling(*, status="success", markdown="# Convertido\n\ntexto",
-                          erro: Exception | None = None) -> dict:
+                          erro: Exception | None = None, confianca=None) -> dict:
     """Injeta um docling falso em sys.modules e devolve o registro de chamadas."""
     registro: dict = {"opcoes": None, "convertidos": [], "instancias": 0}
 
@@ -178,6 +189,7 @@ def instalar_stub_docling(*, status="success", markdown="# Convertido\n\ntexto",
             self.status = _Enum(status)
             self.document = _Doc()
             self.errors = ["detalhe do erro"]
+            self.confidence = confianca
 
     class DocumentConverter:
         def __init__(self, format_options=None):
@@ -334,7 +346,7 @@ class MotorFake(m.MotorBase):
         self.ocr_recebido.append(ocr)
         if self.excecao:
             raise self.excecao
-        return self.texto
+        return m.ResultadoMotor(markdown=self.texto)
 
 
 class TestConversaoUnitaria(BaseTemp):
@@ -411,7 +423,7 @@ class TestMotorDocling(BaseTemp):
         )
         pdf = gerar_pdf(self.tmp / "a.pdf", ["A"])
         self.assertEqual(
-            motor.converter(pdf),
+            motor.converter(pdf).markdown,
             f"{m._marcador_pagina(1)}\n\n# Convertido\n\ntexto",
         )
         o = reg["opcoes"]
@@ -501,7 +513,9 @@ class TestMotorDocling(BaseTemp):
     def test_partial_success_ainda_entrega(self):
         instalar_stub_docling(status="partial_success")
         motor = m.MotorDocling(m.Config(limiar_imagem_pt2=0))
-        self.assertIn("Convertido", motor.converter(gerar_pdf(self.tmp / "a.pdf", ["A"])))
+        self.assertIn(
+            "Convertido", motor.converter(gerar_pdf(self.tmp / "a.pdf", ["A"])).markdown
+        )
 
     def test_converter_reaproveitado_no_lote(self):
         """Modelos devem ser carregados uma unica vez para N arquivos."""
@@ -531,7 +545,7 @@ class TestMotorDocling(BaseTemp):
         bruto = f"conteudo 1{sentinela}conteudo 2{sentinela}conteudo 3"
         instalar_stub_docling(markdown=bruto)
         motor = m.MotorDocling(m.Config(limiar_imagem_pt2=0))
-        saida = motor.converter(gerar_pdf(self.tmp / "a.pdf", ["A"]))
+        saida = motor.converter(gerar_pdf(self.tmp / "a.pdf", ["A"])).markdown
         self.assertEqual(
             saida,
             f"{m._marcador_pagina(1)}\n\nconteudo 1"
@@ -583,6 +597,65 @@ class TestSupressaoDeIconesDecorativos(unittest.TestCase):
     def test_flag_min_image_area_tem_padrao_1000(self):
         args = m.construir_parser().parse_args(["-i", "a.pdf"])
         self.assertEqual(args.min_image_area, 1000.0)
+
+
+# ---------------------------------------------------------------------------
+# 3a-bis. Graus de confianca do Docling (rodada 5, TAREFA-3)
+# ---------------------------------------------------------------------------
+class TestExtrairConfianca(unittest.TestCase):
+    """_extrair_confianca() - funcao pura, com um fake minimo de
+    ConfidenceReport (nao precisa do docling_core de verdade)."""
+
+    def test_documento_excelente_sem_paginas_baixas(self):
+        conf = fake_confianca("excellent", {1: "excellent", 2: "good"})
+        grau, baixas = m._extrair_confianca(types.SimpleNamespace(confidence=conf))
+        self.assertEqual(grau, "excellent")
+        self.assertEqual(baixas, [])
+
+    def test_paginas_poor_e_fair_contam_como_baixas_good_e_excellent_nao(self):
+        conf = fake_confianca(
+            "fair", {1: "excellent", 2: "poor", 3: "good", 4: "fair"}
+        )
+        grau, baixas = m._extrair_confianca(types.SimpleNamespace(confidence=conf))
+        self.assertEqual(grau, "fair")
+        self.assertEqual(baixas, [2, 4])
+
+    def test_sem_confidence_report_devolve_none_e_lista_vazia(self):
+        self.assertEqual(m._extrair_confianca(None), (None, []))
+
+    def test_resultado_sem_atributo_confidence_devolve_none(self):
+        self.assertEqual(m._extrair_confianca(types.SimpleNamespace()), (None, []))
+
+
+class TestConfiancaNoMotorDocling(BaseTemp):
+    def test_grau_e_paginas_baixas_chegam_ao_resultado_motor(self):
+        conf = fake_confianca("fair", {1: "good", 2: "poor"})
+        instalar_stub_docling(confianca=conf)
+        motor = m.MotorDocling(m.Config(limiar_imagem_pt2=0))
+        resultado = motor.converter(gerar_pdf(self.tmp / "a.pdf", ["A"]))
+        self.assertEqual(resultado.grau_medio, "fair")
+        self.assertEqual(resultado.paginas_grau_baixo, [2])
+
+    def test_sem_confidence_report_resultado_motor_fica_com_none(self):
+        instalar_stub_docling(confianca=None)
+        motor = m.MotorDocling(m.Config(limiar_imagem_pt2=0))
+        resultado = motor.converter(gerar_pdf(self.tmp / "a.pdf", ["A"]))
+        self.assertIsNone(resultado.grau_medio)
+        self.assertEqual(resultado.paginas_grau_baixo, [])
+
+    def test_grau_baixo_gera_aviso_mesmo_com_status_success(self):
+        conf = fake_confianca("poor", {1: "poor"})
+        instalar_stub_docling(confianca=conf)
+        motor = m.MotorDocling(m.Config(limiar_imagem_pt2=0))
+        with self.assertLogs("pdf2md", level="WARNING") as captura:
+            motor.converter(gerar_pdf(self.tmp / "a.pdf", ["A"]))
+        self.assertTrue(any("poor" in msg for msg in captura.output))
+
+    def test_motor_simples_nunca_tem_grau(self):
+        pdf = gerar_pdf(self.tmp / "a.pdf", ["A"])
+        resultado = m.MotorSimples().converter(pdf)
+        self.assertIsNone(resultado.grau_medio)
+        self.assertEqual(resultado.paginas_grau_baixo, [])
 
 
 # ---------------------------------------------------------------------------
@@ -827,6 +900,16 @@ class TestEmpacotamento(unittest.TestCase):
         self.assertIn("modoOcrSelecionado", js)
         self.assertIn("modo_ocr", js)  # enviado no FormData do upload
         self.assertIn("rotuloOcr", js)
+
+    def test_frontend_exibe_grau_de_confianca(self):
+        """Rodada 5, TAREFA-3: a linha do job mostra o grau (nao os
+        escores numericos), e o detalhe lista as paginas com grau baixo."""
+        raiz = Path(__file__).resolve().parent / "frontend"
+        js = (raiz / "app.js").read_text(encoding="utf-8")
+        self.assertIn("grau_medio", js)
+        self.assertIn("paginas_grau_baixo", js)
+        self.assertIn("rotuloConfianca", js)
+        self.assertIn("detalheGrauBaixo", js)
 
     def test_frontend_nao_afirma_gpu_ou_docling_incondicionalmente(self):
         """BUG-17: badge/resumo/rodape do frontend diziam "Aguardando GPU" e

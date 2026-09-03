@@ -151,13 +151,53 @@ def _numerar_paginas(markdown: str, sentinela: str = _SENTINELA_QUEBRA_DE_PAGINA
     return "".join(pedacos)
 
 
+@dataclass
+class ResultadoMotor:
+    """Devolvido por MotorBase.converter() - o markdown mais os graus de
+    confianca do Docling (rodada 5, TAREFA-3; None/[] para motores que nao
+    tem essa nocao, como o MotorSimples, que nao roda o pipeline do
+    Docling)."""
+
+    markdown: str
+    grau_medio: str | None = None       # "poor" | "fair" | "good" | "excellent" | None
+    paginas_grau_baixo: list[int] = field(default_factory=list)  # 1-indexadas
+
+
+def _grau_para_texto(grau) -> str:
+    return getattr(grau, "value", str(grau)).lower()
+
+
+def _extrair_confianca(resultado_docling) -> tuple[str | None, list[int]]:
+    """Le os graus de confianca do Docling (campo `confidence` do
+    ConversionResult, desde a v2.34.0) - por documento e por pagina. Usa SO
+    os graus (mean_grade/low_grade), nunca os escores numericos: a propria
+    documentacao do Docling recomenda isso, porque o calculo/ponderacao dos
+    escores pode mudar entre versoes.
+
+    "Pagina com grau baixo" = mean_grade da pagina abaixo de GOOD (POOR ou
+    FAIR) - e a leitura mais direta de "essa pagina especifica pode
+    precisar de revisao manual", o caso de uso que a doc do Docling lista
+    (rodada 5, TAREFA-3). confidence.pages e 1-indexado pelo numero real da
+    pagina (verificado num extrato real de 46 paginas do teste.pdf - chaves
+    1..46), o mesmo indice de _marcador_pagina()."""
+    confianca = getattr(resultado_docling, "confidence", None)
+    if confianca is None:
+        return None, []
+    grau_medio = _grau_para_texto(confianca.mean_grade)
+    paginas_baixo = sorted(
+        pagina for pagina, pontuacao in confianca.pages.items()
+        if _grau_para_texto(pontuacao.mean_grade) in {"poor", "fair"}
+    )
+    return grau_medio, paginas_baixo
+
+
 class MotorBase:
     nome = "base"
 
     def disponivel(self) -> tuple[bool, str]:
         raise NotImplementedError
 
-    def converter(self, pdf: Path, *, ocr: bool | None = None) -> str:
+    def converter(self, pdf: Path, *, ocr: bool | None = None) -> ResultadoMotor:
         """`ocr=None` usa o padrao do motor (self.cfg.ocr); um bool explicito
         sobrepoe SO para esta chamada, sem mutar self.cfg (rodada 3,
         TAREFA-4: liga o override por job que converter_arquivo() ja
@@ -316,7 +356,7 @@ class MotorDocling(MotorBase):
             )
         return self._convs[ocr]
 
-    def converter(self, pdf: Path, *, ocr: bool | None = None) -> str:
+    def converter(self, pdf: Path, *, ocr: bool | None = None) -> ResultadoMotor:
         efetivo = self.cfg.ocr if ocr is None else ocr
         resultado = self._obter_converter(efetivo).convert(str(pdf))
 
@@ -326,11 +366,31 @@ class MotorDocling(MotorBase):
             erros = getattr(resultado, "errors", None) or []
             detalhe = "; ".join(str(e) for e in erros[:3]) or "sem detalhes"
             raise ErroConversao(f"Docling retornou status '{rotulo}': {detalhe}")
-        if rotulo == "partial_success":
-            LOG.warning("%s: conversao parcial, parte do conteudo pode faltar.", pdf.name)
 
-        markdown = self._exportar_markdown(resultado.document)
-        return _numerar_paginas(markdown)
+        grau_medio, paginas_grau_baixo = _extrair_confianca(resultado)
+
+        if rotulo == "partial_success":
+            LOG.warning(
+                "%s: conversao parcial (grau %s), parte do conteudo pode faltar.",
+                pdf.name, grau_medio or "desconhecido",
+            )
+        elif grau_medio in {"poor", "fair"}:
+            # Sucesso "completo" na visao do Docling nao significa boa
+            # qualidade - confianca baixa e um sinal silencioso separado do
+            # status (rodada 5, TAREFA-3). NAO vira erro (o prompt e
+            # explicito sobre isso): a conversao segue utilizavel, so
+            # sinalizada para quem for revisar.
+            LOG.warning(
+                "%s: confianca do Docling '%s' (%d pagina(s) com grau baixo) "
+                "- conversao segue utilizavel, mas pode valer revisao manual.",
+                pdf.name, grau_medio, len(paginas_grau_baixo),
+            )
+
+        markdown = _numerar_paginas(self._exportar_markdown(resultado.document))
+        return ResultadoMotor(
+            markdown=markdown, grau_medio=grau_medio,
+            paginas_grau_baixo=paginas_grau_baixo,
+        )
 
     def _exportar_markdown(self, documento) -> str:
         if self.cfg.limiar_imagem_pt2 <= 0:
@@ -374,9 +434,11 @@ class MotorSimples(MotorBase):
             return False, f"erro ao inspecionar pypdfium2: {exc}"
         return True, ""
 
-    def converter(self, pdf: Path, *, ocr: bool | None = None) -> str:
+    def converter(self, pdf: Path, *, ocr: bool | None = None) -> ResultadoMotor:
         # MotorSimples nunca faz OCR (so le a camada de texto nativa) - o
         # parametro existe so pra manter a mesma assinatura de MotorBase.
+        # Sem confidence report (nao roda o pipeline do Docling) - grau
+        # sempre None (rodada 5, TAREFA-3).
         import pypdfium2 as pdfium
 
         doc = pdfium.PdfDocument(str(pdf))
@@ -397,7 +459,7 @@ class MotorSimples(MotorBase):
                 raise ErroConversao(
                     "nenhum texto extraivel (PDF digitalizado?) - use --engine docling com --ocr"
                 )
-            return "\n\n".join(partes) + "\n"
+            return ResultadoMotor(markdown="\n\n".join(partes) + "\n")
         finally:
             doc.close()
 
@@ -535,6 +597,10 @@ class Resultado:
     mensagem: str = ""
     segundos: float = 0.0
     caracteres: int = 0
+    # Rodada 5, TAREFA-3: None quando o motor nao expoe confidence report
+    # (MotorSimples, ou qualquer resultado que nao chegou a converter).
+    grau_medio: str | None = None
+    paginas_grau_baixo: list[int] = field(default_factory=list)
 
 
 _AVISO_MAX_PAGES_EMITIDO = False
@@ -692,7 +758,7 @@ def converter_arquivo(pdf: Path, saida: Path, motor: MotorBase, cfg: Config) -> 
         # nao mudava nada (cfg aqui e o MESMO objeto usado pra construir o
         # motor em selecionar_motor()); pra app web, e o que agora faz o
         # override por job (jobs._processar) realmente valer.
-        markdown = motor.converter(pdf, ocr=cfg.ocr)
+        resultado_motor = motor.converter(pdf, ocr=cfg.ocr)
     except ErroConversao as exc:
         return Resultado(pdf, saida, "erro", str(exc), time.perf_counter() - inicio)
     except Exception as exc:
@@ -702,6 +768,7 @@ def converter_arquivo(pdf: Path, saida: Path, motor: MotorBase, cfg: Config) -> 
             time.perf_counter() - inicio,
         )
 
+    markdown = resultado_motor.markdown
     if not markdown.strip():
         return Resultado(
             pdf, saida, "erro", "conversao retornou conteudo vazio",
@@ -714,7 +781,9 @@ def converter_arquivo(pdf: Path, saida: Path, motor: MotorBase, cfg: Config) -> 
         return Resultado(pdf, saida, "erro", f"falha ao gravar: {exc}")
 
     return Resultado(
-        pdf, saida, "ok", "", time.perf_counter() - inicio, len(markdown)
+        pdf, saida, "ok", "", time.perf_counter() - inicio, len(markdown),
+        grau_medio=resultado_motor.grau_medio,
+        paginas_grau_baixo=resultado_motor.paginas_grau_baixo,
     )
 
 

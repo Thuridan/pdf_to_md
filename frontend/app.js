@@ -203,6 +203,16 @@ function rotuloOcr(job) {
   return `OCR: ${job.ocr ? "sim" : "não"} (${origem})`;
 }
 
+// Grau de confianca da conversao (rodada 5, TAREFA-3) - so os GRAUS, nunca
+// os escores numericos: mesmo criterio do backend (ver docs/backend.md).
+// null quando o motor ativo nao expoe essa nocao (ex.: motor simples).
+const RUBRICA_GRAU = { poor: "ruim", fair: "razoável", good: "boa", excellent: "excelente" };
+
+function rotuloConfianca(job) {
+  if (job.grau_medio == null) return null;
+  return `confiança: ${RUBRICA_GRAU[job.grau_medio] || job.grau_medio}`;
+}
+
 function metaLinha(job) {
   const partes = [];
   if (job.paginas_totais != null) {
@@ -211,7 +221,18 @@ function metaLinha(job) {
   if (job.tamanho_bytes) partes.push(formatarTamanho(job.tamanho_bytes));
   const ocr = rotuloOcr(job);
   if (ocr) partes.push(ocr);
+  const confianca = rotuloConfianca(job);
+  if (confianca) partes.push(confianca);
   return partes.join(" · ");
+}
+
+// "Confiança baixa nas páginas: X, Y" - so quando ha pelo menos uma pagina
+// com grau ruim/razoavel (rodada 5, TAREFA-3). NAO e erro: a conversao
+// segue utilizavel, e so um sinal de que pode valer revisao manual.
+function detalheGrauBaixo(job) {
+  if (!job.paginas_grau_baixo || job.paginas_grau_baixo.length === 0) return "";
+  const paginas = job.paginas_grau_baixo.join(", ");
+  return `<div class="meta-fina meta-aviso" title="Estas páginas ficaram com confiança baixa na conversão - o resultado segue utilizável, mas pode valer revisão manual.">Confiança baixa: página${job.paginas_grau_baixo.length === 1 ? "" : "s"} ${paginas}</div>`;
 }
 
 // Sufixo neutro de duracao estimada ("· ~38 min", opcionalmente marcado
@@ -252,7 +273,10 @@ function blocoEstado(job, totalNaFila) {
     `;
   }
   if (job.status === "concluido") {
-    return `<div class="badge badge-green">${ICONE_CHECK} Concluído</div>`;
+    return `
+      <div class="badge badge-green">${ICONE_CHECK} Concluído</div>
+      ${detalheGrauBaixo(job)}
+    `;
   }
   return `
     <div class="badge badge-red">${ICONE_ALERTA} Erro</div>

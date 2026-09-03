@@ -261,6 +261,14 @@ inteiro sem carregar informação nenhuma. Capturas de tela reais (a área
 típica é de dezenas de milhares de pts² pra cima) não são afetadas. `0`
 desliga a supressão.
 
+## Grau de confiança da conversão
+
+A app web expõe o grau de confiança do Docling (`poor`/`fair`/`good`/
+`excellent`) por documento e por página — a linha do job mostra o grau
+geral, e sinaliza as páginas com grau baixo (`poor`/`fair`) para revisão
+manual. Não é erro: a conversão continua utilizável mesmo com grau baixo,
+é só um sinal de qualidade que hoje fica invisível no `.md` puro.
+
 ## Marcadores de página
 
 Todo `.md` gerado (pelos dois motores) traz `<!-- página N -->` no início
