@@ -341,6 +341,41 @@ class TestDownloadEndpoints(unittest.TestCase):
         self.assertNotIn("\\", disposition)
         self.assertIn("evil.md", disposition)
 
+    def test_zip_pula_arquivo_que_sumiu_em_vez_de_derrubar_o_download(self):
+        """BUG-13: zf.write() levantava FileNotFoundError nao tratado (viraria
+        500) se um DELETE concorrente apagasse o .md entre jobs_concluidos()
+        e a escrita no zip. Insere um job 'concluido' cujo caminho_saida
+        aponta para um arquivo que nunca existiu, misturado com um job real."""
+        self._job_concluido("presente", "ok.pdf", "conteudo ok")
+        sumido = jobs.Job(
+            id="sumido", nome_original="sumido.pdf",
+            caminho_pdf=Path(self._tmp.name) / "sumido.pdf",
+            status="concluido",
+            caminho_saida=Path(self._tmp.name) / "sumido.md",  # nunca criado
+        )
+        jobs.obter_store().adicionar(sumido)
+
+        with TestClient(app) as cliente:
+            resposta = cliente.get("/api/download-zip")
+
+        self.assertEqual(resposta.status_code, 200)
+        zf = zipfile.ZipFile(io.BytesIO(resposta.content))
+        self.assertEqual(zf.namelist(), ["ok.md"])
+
+    def test_zip_com_todos_os_arquivos_sumidos_devolve_404(self):
+        sumido = jobs.Job(
+            id="sumido", nome_original="sumido.pdf",
+            caminho_pdf=Path(self._tmp.name) / "sumido.pdf",
+            status="concluido",
+            caminho_saida=Path(self._tmp.name) / "sumido.md",  # nunca criado
+        )
+        jobs.obter_store().adicionar(sumido)
+
+        with TestClient(app) as cliente:
+            resposta = cliente.get("/api/download-zip")
+
+        self.assertEqual(resposta.status_code, 404)
+
 
 class TestRemoverJobsEndpoints(unittest.TestCase):
     """DELETE /api/jobs/{id} e DELETE /api/jobs (limpar finalizados) - mesmo

@@ -5,8 +5,8 @@ backend.src.services. Nenhuma logica de negocio mora aqui."""
 
 from __future__ import annotations
 
-import io
 import os
+import tempfile
 import zipfile
 from pathlib import Path
 
@@ -168,15 +168,31 @@ def baixar_zip(ids: str | None = None) -> StreamingResponse:
     if not concluidos:
         raise HTTPException(status_code=404, detail="nenhum job concluido para baixar")
 
-    buffer = io.BytesIO()
+    # SpooledTemporaryFile em vez de BytesIO: acima de 10 MiB, transborda pra
+    # disco em vez de dobrar o footprint de memoria do processo com um zip
+    # grande (a resposta ainda nao e streaming de verdade - o zip inteiro e
+    # montado antes de comecar a responder - mas o consumo de RAM fica limitado).
+    buffer = tempfile.SpooledTemporaryFile(max_size=10 * 1024 * 1024)
     usados: set[str] = set()
+    algum_gravado = False
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
         for job in concluidos:
             nome = _nome_saida_seguro(job.nome_original, job.id)
             if nome in usados:
                 nome = f"{job.id[:8]}-{nome}"
             usados.add(nome)
-            zf.write(job.caminho_saida, arcname=nome)
+            try:
+                zf.write(job.caminho_saida, arcname=nome)
+            except OSError:
+                # arquivo sumiu entre jobs_concluidos() e aqui (ex.: DELETE
+                # concorrente) - pula em vez de derrubar o download inteiro.
+                continue
+            algum_gravado = True
+    if not algum_gravado:
+        raise HTTPException(
+            status_code=404,
+            detail="nenhum arquivo disponivel para baixar (removidos durante a preparacao do zip)",
+        )
     buffer.seek(0)
 
     return StreamingResponse(
