@@ -145,6 +145,51 @@ class TestFilaProcessamentoErro(_ComMotorStub):
             self.assertIsNone(job.caminho_saida)
 
 
+class TestFilaSobreviveAErroInesperado(unittest.TestCase):
+    """BUG-01: uma excecao nao tratada (ex.: motor_pool.obter_motor() RuntimeError)
+    nao pode matar a thread worker nem travar a fila para sempre."""
+
+    def setUp(self):
+        self._obter_motor_original = motor_pool.obter_motor
+        self._cfg_original = motor_pool._cfg
+        motor_pool._cfg = m.Config()
+        jobs.iniciar_worker()
+
+    def tearDown(self):
+        jobs.parar_worker()
+        motor_pool.obter_motor = self._obter_motor_original
+        motor_pool._cfg = self._cfg_original
+
+    def test_falha_inesperada_no_meio_da_fila_nao_derruba_o_worker(self):
+        motor_ok = _MotorDeTeste()
+        chamadas = {"n": 0}
+
+        def obter_motor_com_falha_no_segundo():
+            chamadas["n"] += 1
+            if chamadas["n"] == 2:
+                raise RuntimeError("motor indisponivel (falha simulada)")
+            return motor_ok
+
+        motor_pool.obter_motor = obter_motor_com_falha_no_segundo
+
+        with tempfile.TemporaryDirectory() as tmp:
+            a = jobs.criar_job("a.pdf", b"%PDF-1.4", diretorio=Path(tmp))
+            b = jobs.criar_job("b.pdf", b"%PDF-1.4", diretorio=Path(tmp))
+            c = jobs.criar_job("c.pdf", b"%PDF-1.4", diretorio=Path(tmp))
+
+            jobs.enfileirar(a.id)
+            jobs.enfileirar(b.id)
+            jobs.enfileirar(c.id)
+
+            self.assertTrue(_aguardar(lambda: c.status == "concluido"))
+
+            self.assertEqual(a.status, "concluido")
+            self.assertEqual(b.status, "erro")
+            self.assertEqual(b.mensagem_erro, "falha interna ao processar")
+            self.assertEqual(c.status, "concluido")
+            self.assertTrue(jobs._worker_thread.is_alive())
+
+
 class TestFilaAtualizaProgresso(_ComMotorStub):
     """Step 5, ponta a ponta pelo worker real: paginas_totais e a media movel."""
 

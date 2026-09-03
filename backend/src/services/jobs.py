@@ -11,6 +11,7 @@ gargalo real e a instancia de modelo compartilhada, nao "quantos jobs cabem"
 
 from __future__ import annotations
 
+import logging
 import queue
 import threading
 import uuid
@@ -26,6 +27,8 @@ DIR_UPLOADS = Path(__file__).resolve().parents[2] / "uploads"
 STATUS_VALIDOS = {"na_fila", "processando", "concluido", "erro"}
 
 _SENTINEL = object()
+
+LOG = logging.getLogger(__name__)
 
 # Estimativa de progresso: o Docling nao expoe callback nativo por pagina, entao
 # "pagina atual" e uma projecao por tempo decorrido (elapsed / segundos_por_pagina).
@@ -234,6 +237,13 @@ def _processar(job_id: str) -> None:
         job.mensagem_erro = resultado.mensagem
 
 
+def _marcar_erro(job_id: str, mensagem: str) -> None:
+    job = _store.obter(job_id)
+    if job is not None:
+        job.status = "erro"
+        job.mensagem_erro = mensagem
+
+
 def _loop() -> None:
     while True:
         item = _fila.get()
@@ -241,6 +251,9 @@ def _loop() -> None:
             if item is _SENTINEL:
                 return
             _processar(item)  # type: ignore[arg-type]
+        except Exception:
+            LOG.exception("Falha inesperada ao processar %r", item)
+            _marcar_erro(item, "falha interna ao processar")  # type: ignore[arg-type]
         finally:
             _fila.task_done()
 
