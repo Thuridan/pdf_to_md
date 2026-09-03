@@ -57,6 +57,30 @@ def gerar_pdf_paginas(caminho: Path, paginas: list[str | None]) -> Path:
     return caminho
 
 
+def gerar_documento_com_figuras(tamanhos_pts: list[tuple[float, float]]):
+    """DoclingDocument REAL (nao o stub de docling.*) com uma PictureItem por
+    tamanho em `tamanhos_pts` (largura, altura), todas na pagina 1 - usado
+    para testar o PictureSerializer de supressao de icones (rodada 5,
+    TAREFA-2) contra a API real do docling_core, ja que o stub de
+    `instalar_stub_docling` nao produz um DoclingDocument utilizavel pelo
+    MarkdownDocSerializer (so simula export_to_markdown() com uma string
+    fixa)."""
+    from docling_core.types.doc.base import BoundingBox, CoordOrigin, Size
+    from docling_core.types.doc.document import DoclingDocument, ProvenanceItem
+
+    doc = DoclingDocument(name="teste")
+    doc.add_page(page_no=1, size=Size(width=1000, height=1400))
+    topo = 1390.0
+    for largura, altura in tamanhos_pts:
+        bbox = BoundingBox(
+            l=10, t=topo, r=10 + largura, b=topo - altura,
+            coord_origin=CoordOrigin.BOTTOMLEFT,
+        )
+        doc.add_picture(prov=ProvenanceItem(page_no=1, charspan=(0, 0), bbox=bbox))
+        topo -= altura + 10
+    return doc
+
+
 def instalar_stub_docling(*, status="success", markdown="# Convertido\n\ntexto",
                           erro: Exception | None = None) -> dict:
     """Injeta um docling falso em sys.modules e devolve o registro de chamadas."""
@@ -382,7 +406,9 @@ class TestConversaoUnitaria(BaseTemp):
 class TestMotorDocling(BaseTemp):
     def test_opcoes_padrao_pt(self):
         reg = instalar_stub_docling()
-        motor = m.MotorDocling(m.Config(lang=["pt"], threads=8, tables="accurate"))
+        motor = m.MotorDocling(
+            m.Config(lang=["pt"], threads=8, tables="accurate", limiar_imagem_pt2=0)
+        )
         pdf = gerar_pdf(self.tmp / "a.pdf", ["A"])
         self.assertEqual(
             motor.converter(pdf),
@@ -399,26 +425,30 @@ class TestMotorDocling(BaseTemp):
 
     def test_rapidocr_reduz_para_um_idioma(self):
         reg = instalar_stub_docling()
-        motor = m.MotorDocling(m.Config(lang=["pt", "en"]))
+        motor = m.MotorDocling(m.Config(lang=["pt", "en"], limiar_imagem_pt2=0))
         motor.converter(gerar_pdf(self.tmp / "a.pdf", ["A"]))
         self.assertEqual(reg["opcoes"].ocr_options.lang, ["pt"])
 
     def test_tesseract_converte_codigo_iso(self):
         reg = instalar_stub_docling()
-        motor = m.MotorDocling(m.Config(ocr_engine="tesseract", lang=["pt", "en"]))
+        motor = m.MotorDocling(
+            m.Config(ocr_engine="tesseract", lang=["pt", "en"], limiar_imagem_pt2=0)
+        )
         motor.converter(gerar_pdf(self.tmp / "a.pdf", ["A"]))
         self.assertEqual(reg["opcoes"].ocr_options.lang, ["por", "eng"])
 
     def test_easyocr_mantem_lista(self):
         reg = instalar_stub_docling()
-        m.MotorDocling(m.Config(ocr_engine="easyocr", lang=["pt", "en"])).converter(
+        m.MotorDocling(
+            m.Config(ocr_engine="easyocr", lang=["pt", "en"], limiar_imagem_pt2=0)
+        ).converter(
             gerar_pdf(self.tmp / "a.pdf", ["A"])
         )
         self.assertEqual(reg["opcoes"].ocr_options.lang, ["pt", "en"])
 
     def test_no_ocr_e_sem_tabelas(self):
         reg = instalar_stub_docling()
-        m.MotorDocling(m.Config(ocr=False, tables="none")).converter(
+        m.MotorDocling(m.Config(ocr=False, tables="none", limiar_imagem_pt2=0)).converter(
             gerar_pdf(self.tmp / "a.pdf", ["A"])
         )
         self.assertFalse(reg["opcoes"].do_ocr)
@@ -426,7 +456,9 @@ class TestMotorDocling(BaseTemp):
 
     def test_artifacts_e_timeout(self):
         reg = instalar_stub_docling()
-        m.MotorDocling(m.Config(artifacts=Path("/modelos"), timeout=90)).converter(
+        m.MotorDocling(
+            m.Config(artifacts=Path("/modelos"), timeout=90, limiar_imagem_pt2=0)
+        ).converter(
             gerar_pdf(self.tmp / "a.pdf", ["A"])
         )
         self.assertEqual(reg["opcoes"].artifacts_path, "/modelos")
@@ -437,7 +469,7 @@ class TestMotorDocling(BaseTemp):
         DocumentConverter (nao e argumento de convert()) - ligar/desligar
         OCR por job exige um converter por modo, nao um unico reaproveitado."""
         reg = instalar_stub_docling()
-        motor = m.MotorDocling(m.Config(ocr=True))
+        motor = m.MotorDocling(m.Config(ocr=True, limiar_imagem_pt2=0))
         pdf = gerar_pdf(self.tmp / "a.pdf", ["A"])
 
         motor.converter(pdf, ocr=True)
@@ -454,27 +486,27 @@ class TestMotorDocling(BaseTemp):
 
     def test_converter_sem_ocr_explicito_usa_o_padrao_do_cfg(self):
         reg = instalar_stub_docling()
-        motor = m.MotorDocling(m.Config(ocr=False))
+        motor = m.MotorDocling(m.Config(ocr=False, limiar_imagem_pt2=0))
         motor.converter(gerar_pdf(self.tmp / "a.pdf", ["A"]))  # sem ocr= explicito
         self.assertFalse(reg["opcoes"].do_ocr)
         self.assertEqual(set(motor._convs.keys()), {False})
 
     def test_status_failure_vira_erro(self):
         instalar_stub_docling(status="failure")
-        motor = m.MotorDocling(m.Config())
+        motor = m.MotorDocling(m.Config(limiar_imagem_pt2=0))
         with self.assertRaises(m.ErroConversao) as ctx:
             motor.converter(gerar_pdf(self.tmp / "a.pdf", ["A"]))
         self.assertIn("failure", str(ctx.exception))
 
     def test_partial_success_ainda_entrega(self):
         instalar_stub_docling(status="partial_success")
-        motor = m.MotorDocling(m.Config())
+        motor = m.MotorDocling(m.Config(limiar_imagem_pt2=0))
         self.assertIn("Convertido", motor.converter(gerar_pdf(self.tmp / "a.pdf", ["A"])))
 
     def test_converter_reaproveitado_no_lote(self):
         """Modelos devem ser carregados uma unica vez para N arquivos."""
         reg = instalar_stub_docling()
-        motor = m.MotorDocling(m.Config())
+        motor = m.MotorDocling(m.Config(limiar_imagem_pt2=0))
         for i in range(3):
             motor.converter(gerar_pdf(self.tmp / f"{i}.pdf", ["A"]))
         self.assertEqual(reg["instancias"], 1)
@@ -485,7 +517,7 @@ class TestMotorDocling(BaseTemp):
         NENHUMA quebra de pagina no markdown - a saida fica sem sinal
         nenhum de origem por pagina."""
         reg = instalar_stub_docling()
-        motor = m.MotorDocling(m.Config())
+        motor = m.MotorDocling(m.Config(limiar_imagem_pt2=0))
         motor.converter(gerar_pdf(self.tmp / "a.pdf", ["A"]))
         self.assertEqual(
             reg["export_kwargs"].get("page_break_placeholder"),
@@ -498,7 +530,7 @@ class TestMotorDocling(BaseTemp):
         sentinela = m._SENTINELA_QUEBRA_DE_PAGINA
         bruto = f"conteudo 1{sentinela}conteudo 2{sentinela}conteudo 3"
         instalar_stub_docling(markdown=bruto)
-        motor = m.MotorDocling(m.Config())
+        motor = m.MotorDocling(m.Config(limiar_imagem_pt2=0))
         saida = motor.converter(gerar_pdf(self.tmp / "a.pdf", ["A"]))
         self.assertEqual(
             saida,
@@ -506,6 +538,51 @@ class TestMotorDocling(BaseTemp):
             f"\n\n{m._marcador_pagina(2)}\n\nconteudo 2"
             f"\n\n{m._marcador_pagina(3)}\n\nconteudo 3",
         )
+
+
+# ---------------------------------------------------------------------------
+# 3a. Supressao de icones decorativos (rodada 5, TAREFA-2) - DoclingDocument
+#     real, nao o stub de docling.* (o stub nao produz algo que o
+#     MarkdownDocSerializer aceite).
+# ---------------------------------------------------------------------------
+class TestSupressaoDeIconesDecorativos(unittest.TestCase):
+    def test_suprime_figura_abaixo_do_limiar(self):
+        doc = gerar_documento_com_figuras([(10, 10)])  # 100 pts^2
+        motor = m.MotorDocling(m.Config(limiar_imagem_pt2=1000.0))
+        self.assertEqual(motor._exportar_markdown(doc), "")
+
+    def test_mantem_figura_no_limiar_ou_acima(self):
+        doc = gerar_documento_com_figuras([(400, 300)])  # 120.000 pts^2
+        motor = m.MotorDocling(m.Config(limiar_imagem_pt2=1000.0))
+        self.assertIn("<!-- image -->", motor._exportar_markdown(doc))
+
+    def test_mistura_suprime_so_as_pequenas(self):
+        """Reproduz a distribuicao real medida no teste.pdf: icones de UI
+        (~8x8 a ~20x20 pts) e capturas de tela grandes (centenas de pts) na
+        mesma pagina - so as pequenas devem sumir."""
+        doc = gerar_documento_com_figuras([
+            (8, 8), (15, 14), (16, 16),      # icones - devem sumir
+            (441.1, 233.5), (358.5, 181.2),  # paginas 61/91 do teste.pdf - devem ficar
+        ])
+        motor = m.MotorDocling(m.Config(limiar_imagem_pt2=1000.0))
+        saida = motor._exportar_markdown(doc)
+        self.assertEqual(saida.count("<!-- image -->"), 2)
+
+    def test_limiar_zero_desliga_a_supressao(self):
+        doc = gerar_documento_com_figuras([(8, 8), (400, 300)])
+        motor = m.MotorDocling(m.Config(limiar_imagem_pt2=0))
+        saida = motor._exportar_markdown(doc)
+        self.assertEqual(saida.count("<!-- image -->"), 2)
+
+    def test_flag_min_image_area_chega_ate_o_config(self):
+        args = m.construir_parser().parse_args(
+            ["-i", "a.pdf", "--min-image-area", "55.5"]
+        )
+        self.assertEqual(args.min_image_area, 55.5)
+
+    def test_flag_min_image_area_tem_padrao_1000(self):
+        args = m.construir_parser().parse_args(["-i", "a.pdf"])
+        self.assertEqual(args.min_image_area, 1000.0)
 
 
 # ---------------------------------------------------------------------------
@@ -872,7 +949,7 @@ class TestCLI(BaseTemp):
         gerar_pdf(self.tmp / "in" / "a.pdf", ["A"])
         gerar_pdf(self.tmp / "in" / "b.pdf", ["B"])
         rc = m.main(["-q", "--engine", "docling", "-i", str(self.tmp / "in"),
-                     "-o", str(self.tmp / "out")])
+                     "-o", str(self.tmp / "out"), "--min-image-area", "0"])
         self.assertEqual(rc, m.EXIT_OK)
         self.assertIn("# Doc", (self.tmp / "out" / "a.md").read_text(encoding="utf-8"))
         self.assertIn("# Doc", (self.tmp / "out" / "b.md").read_text(encoding="utf-8"))
@@ -936,7 +1013,13 @@ class TestRegressoes(BaseTemp):
 # ---------------------------------------------------------------------------
 class TestGPU(BaseTemp):
     def _opcoes(self, cfg: m.Config):
+        import dataclasses
+
         reg = instalar_stub_docling()
+        # limiar_imagem_pt2=0 (TAREFA-2) bypassa o MarkdownDocSerializer
+        # real - o _Doc do stub nao e um DoclingDocument de verdade, e
+        # estes testes so olham as opcoes de pipeline, nao o markdown.
+        cfg = dataclasses.replace(cfg, limiar_imagem_pt2=0)
         m.MotorDocling(cfg).converter(gerar_pdf(self.tmp / "a.pdf", ["A"]))
         return reg["opcoes"]
 
@@ -973,7 +1056,8 @@ class TestGPU(BaseTemp):
     def test_cli_aceita_cuda_indexado(self):
         instalar_stub_docling()
         pdf = gerar_pdf(self.tmp / "a.pdf", ["A"])
-        rc = m.main(["-q", "--engine", "docling", "-i", str(pdf), "--device", "cuda:1"])
+        rc = m.main(["-q", "--engine", "docling", "-i", str(pdf), "--device", "cuda:1",
+                     "--min-image-area", "0"])
         self.assertEqual(rc, m.EXIT_OK)
 
     def test_hardware_retorna_ok(self):
@@ -1155,6 +1239,7 @@ class TestJobs(BaseTemp):
         instalar_stub_docling()
         pdf = gerar_pdf(self.tmp / "a.pdf", ["A"])
         with self.assertLogs("pdf2md", level="WARNING") as captura:
-            rc = m.main(["--engine", "docling", "-i", str(pdf), "--jobs", "4"])
+            rc = m.main(["--engine", "docling", "-i", str(pdf), "--jobs", "4",
+                         "--min-image-area", "0"])
         self.assertEqual(rc, m.EXIT_OK)
         self.assertTrue(any("ignorado" in msg for msg in captura.output))

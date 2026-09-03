@@ -162,6 +162,44 @@ Verificado num extrato real de 46 páginas (`teste.pdf`, páginas 50–95):
 meio de uma linha de tabela ou dentro de um bloco de código (o Docling só
 insere a quebra *entre* unidades já serializadas, nunca dentro de uma).
 
+### Supressão de ícones decorativos (rodada 5, TAREFA-2)
+
+`<!-- image -->` era a linha mais repetida do `.md` gerado de um documento
+grande (1303× em 27.249 linhas do `teste.pdf` inteiro) — a maioria ícones
+de UI de ~8×8 a ~20×20 pts, não conteúdo. `_construir_supressor_de_icones()`
+cria um `PictureSerializer` (subclasse de
+`MarkdownPictureSerializer` do `docling_core`) que devolve string vazia
+para toda figura cuja bbox (`item.prov[0].bbox`, área em pts², sempre
+disponível) for menor que `cfg.limiar_imagem_pt2` (`--min-image-area` na
+CLI, padrão 1000.0; `0` desliga), e delega ao serializador padrão para as
+demais. `MotorDocling._exportar_markdown()` usa esse serializer via
+`MarkdownDocSerializer(doc=..., picture_serializer=..., params=...)` — a
+via de baixo nível, já que `export_to_markdown()` não expõe um jeito de
+trocar o serializador de figura.
+
+**Por que bbox e não o tamanho do bitmap embutido:** o `PictureItem` só
+expõe o tamanho real (em pixels) do bitmap recortado quando
+`generate_picture_images=True` está ligado — opção que mantém bitmaps de
+página em memória e cujo custo já preocupa a rodada de memória (ver
+TAREFA-4 da rodada 4, e TAREFA-4 desta rodada). Sem ela, `item.image` fica
+`None` e não há como medir pixels sem pagar esse custo. A bbox de layout,
+por outro lado, é sempre calculada (independe dessa opção) e mede o
+tamanho físico da figura *na página* (pts², 1pt ≈ 1px @72dpi) — uma medida
+diferente da resolução nativa do bitmap, mas que separa ícone de captura
+de tela igualmente bem, e sem custo extra.
+
+**Calibração:** medida num extrato real de 46 páginas do `teste.pdf`
+(as mesmas 65 figuras da seção anterior) — distribuição claramente
+bimodal: 39 figuras entre 63 e 424 pts² (ícones, todos quase quadrados) e
+26 entre 2.518 e 105.813 pts² (capturas reais), com um vão de ~6× entre os
+dois grupos e nenhuma figura no meio. `1000` cai bem no meio desse vão.
+As duas capturas que motivaram a rodada 4 (páginas 61 e 91 do `teste.pdf`)
+medem 102.988 e 64.948 pts² — folgadamente acima do limiar, confirmadas
+presentes na saída depois da supressão. Ponto de partida de um documento
+só, como o próprio limiar original de "120.000 pixels" do prompt — mas
+recalibrado numa métrica diferente (pts² de bbox, não pixels nativos do
+bitmap) pelo motivo acima, e configurável via `--min-image-area`.
+
 ### `MotorSimples` — leve, sem IA
 
 ```python

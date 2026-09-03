@@ -71,6 +71,7 @@ class Config:
     dry_run: bool = False
     max_pages: int | None = None    # None = sem limite (comportamento original)
     jobs: int = 1                   # paralelismo de lote; so tem efeito no motor 'simples'
+    limiar_imagem_pt2: float = 1000.0  # area minima (pts^2, @72dpi) p/ nao suprimir a figura; 0 desliga
 
 
 def aplicar_ambiente(cfg: Config) -> None:
@@ -164,6 +165,35 @@ class MotorBase:
         converter_arquivo() calculava um Config por job mas nunca o
         repassava pra ca, entao o override nao tinha efeito algum)."""
         raise NotImplementedError
+
+
+def _construir_supressor_de_icones(limiar_pt2: float):
+    """Fabrica preguicosa (importa docling_core so quando chamada, mesmo
+    padrao lazy-import do resto do motor) de um PictureSerializer que
+    suprime completamente (string vazia, nem placeholder) figuras cuja
+    bbox na pagina for menor que `limiar_pt2` - icones de UI repetidos,
+    tipicamente ~8x8 a ~20x20 pts no teste real - e delega ao serializador
+    padrao do Markdown para as demais (rodada 5, TAREFA-2).
+
+    Usa a bbox de layout (sempre disponivel) em vez do tamanho do bitmap
+    embutido (so disponivel com generate_picture_images=True, que mantem
+    bitmaps de pagina em memoria - ver TAREFA-4/docs/backend.md): o
+    PictureItem nao expoe dimensoes de pixel utilizaveis sem essa opcao
+    cara, entao a bbox (area em pts^2, equivalente a pixels @72dpi) e o
+    dado "limpo" que da pra usar sem pagar esse custo."""
+    from docling_core.transforms.serializer.common import create_ser_result
+    from docling_core.transforms.serializer.markdown import MarkdownPictureSerializer
+
+    class _SupressorDeImagemDecorativa(MarkdownPictureSerializer):
+        def serialize(self, *, item, doc_serializer, doc, **kwargs):
+            if item.prov:
+                bbox = item.prov[0].bbox
+                area = abs(bbox.r - bbox.l) * abs(bbox.t - bbox.b)
+                if area < limiar_pt2:
+                    return create_ser_result(span_source=item)
+            return super().serialize(item=item, doc_serializer=doc_serializer, doc=doc, **kwargs)
+
+    return _SupressorDeImagemDecorativa()
 
 
 class MotorDocling(MotorBase):
@@ -299,10 +329,34 @@ class MotorDocling(MotorBase):
         if rotulo == "partial_success":
             LOG.warning("%s: conversao parcial, parte do conteudo pode faltar.", pdf.name)
 
-        markdown = resultado.document.export_to_markdown(
-            page_break_placeholder=_SENTINELA_QUEBRA_DE_PAGINA
-        )
+        markdown = self._exportar_markdown(resultado.document)
         return _numerar_paginas(markdown)
+
+    def _exportar_markdown(self, documento) -> str:
+        if self.cfg.limiar_imagem_pt2 <= 0:
+            # 0 (ou negativo) desliga a supressao - comportamento padrao
+            # do docling_core, sem PictureSerializer customizado.
+            return documento.export_to_markdown(
+                page_break_placeholder=_SENTINELA_QUEBRA_DE_PAGINA
+            )
+
+        from docling_core.transforms.serializer.markdown import (
+            MarkdownDocSerializer, MarkdownParams,
+        )
+        from docling_core.types.doc.document import (
+            DEFAULT_CONTENT_LAYERS, DOCUMENT_TOKENS_EXPORT_LABELS,
+        )
+
+        serializer = MarkdownDocSerializer(
+            doc=documento,
+            picture_serializer=_construir_supressor_de_icones(self.cfg.limiar_imagem_pt2),
+            params=MarkdownParams(
+                labels=DOCUMENT_TOKENS_EXPORT_LABELS,
+                layers=DEFAULT_CONTENT_LAYERS,
+                page_break_placeholder=_SENTINELA_QUEBRA_DE_PAGINA,
+            ),
+        )
+        return serializer.serialize().text
 
 
 class MotorSimples(MotorBase):
@@ -814,6 +868,11 @@ def construir_parser() -> argparse.ArgumentParser:
     p.add_argument("--jobs", type=int, default=1, metavar="N",
                    help="PDFs convertidos em paralelo (padrao: 1). So tem efeito "
                         "com --engine simples; ignorado com docling.")
+    p.add_argument("--min-image-area", type=float, default=1000.0, metavar="PTS2",
+                   help="Area minima (pts^2, equivalente a pixels @72dpi) para uma "
+                        "figura aparecer no Markdown; abaixo disso e tratada como "
+                        "icone decorativo e suprimida (padrao: 1000.0). 0 desliga "
+                        "a supressao. So se aplica ao motor docling.")
     p.add_argument("--overwrite", action="store_true",
                    help="Sobrescreve arquivos .md existentes.")
     p.add_argument("--dry-run", action="store_true",
@@ -927,6 +986,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         dry_run=args.dry_run,
         max_pages=args.max_pages,
         jobs=args.jobs,
+        limiar_imagem_pt2=args.min_image_area,
     )
     aplicar_ambiente(cfg)
 

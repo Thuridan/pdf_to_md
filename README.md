@@ -123,6 +123,7 @@ python pdf_to_md.py                                      # modo interativo
 | `--offline`, `--artifacts` | Bloqueia o HF Hub / aponta modelos locais. |
 | `--timeout` | Tempo máximo por documento. |
 | `--max-pages` | Recusa PDFs com mais páginas que o limite antes de converter (checagem barata via pypdfium2; sem limite por padrão). |
+| `--min-image-area` | Área mínima (pts²) para uma figura aparecer no `.md`; abaixo disso é ícone decorativo suprimido (padrão: 1000.0; `0` desliga). Só motor docling. |
 | `--jobs` | PDFs convertidos em paralelo (padrão: 1). Só tem efeito com `--engine simples`; ignorado (com aviso) no Docling, já que cada processo recarregaria os modelos inteiros. |
 | `--overwrite`, `--dry-run` | Sobrescrever / simular. |
 | `-v, --verbose`, `-q, --quiet` | Nível de log. |
@@ -250,6 +251,15 @@ Use `python pdf_to_md.py --hardware` para ver o que a máquina realmente oferece
   bloqueia apenas o HF Hub (layout e TableFormer).
 - Para documentos digitais (gerados por editor, não digitalizados), `--no-ocr` reduz
   drasticamente o tempo sem perda de qualidade.
+
+## Ícones decorativos suprimidos do Markdown
+
+`--min-image-area PTS2` (padrão `1000.0`; motor docling) tira do `.md`
+figuras cuja área na página for menor que o limiar — ícones de UI
+repetidos, que num manual grande podiam ser a linha mais comum do arquivo
+inteiro sem carregar informação nenhuma. Capturas de tela reais (a área
+típica é de dezenas de milhares de pts² pra cima) não são afetadas. `0`
+desliga a supressão.
 
 ## Marcadores de página
 
