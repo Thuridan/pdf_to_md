@@ -538,6 +538,17 @@ class TestEmpacotamento(unittest.TestCase):
         self.assertNotIn("v3.0", html)
         self.assertIn('id="app-version"', html)
 
+    def test_frontend_nao_afirma_gpu_ou_docling_incondicionalmente(self):
+        """BUG-17: badge/resumo/rodape do frontend diziam "Aguardando GPU" e
+        "motor Docling" incondicionalmente, mesmo quando o motor real e
+        `simples` (CPU, sem GPU/Docling envolvidos) - #motor-pill podia
+        mostrar "Motor: simples" ao lado de um badge dizendo "Aguardando GPU"."""
+        raiz = Path(__file__).resolve().parent / "frontend"
+        for nome in ("app.js", "index.html"):
+            conteudo = (raiz / nome).read_text(encoding="utf-8")
+            self.assertNotIn("GPU", conteudo, f"{nome} nao deveria mencionar GPU")
+            self.assertNotIn("Docling", conteudo, f"{nome} nao deveria mencionar Docling")
+
 
 # ---------------------------------------------------------------------------
 # 7. CLI ponta a ponta (motor real pypdfium2)

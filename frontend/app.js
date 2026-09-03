@@ -183,7 +183,7 @@ function metaLinha(job) {
 function blocoEstado(job, totalNaFila) {
   if (job.status === "na_fila") {
     return `
-      <div class="badge badge-amber">${ICONE_RELOGIO} Aguardando GPU</div>
+      <div class="badge badge-amber">${ICONE_RELOGIO} Na fila</div>
       <div class="meta-fina">posição ${job.posicao_na_fila} de ${totalNaFila} na fila</div>
     `;
   }
@@ -242,7 +242,7 @@ function renderizarFila() {
   for (const j of jobsCache) contagens[j.status] = (contagens[j.status] || 0) + 1;
 
   summaryEl.textContent = jobsCache.length
-    ? `${contagens.processando} processando · ${contagens.na_fila} aguardando GPU · ${contagens.concluido} concluídos · ${contagens.erro} com erro`
+    ? `${contagens.processando} processando · ${contagens.na_fila} na fila · ${contagens.concluido} concluídos · ${contagens.erro} com erro`
     : "nenhum arquivo enviado ainda";
 
   if (contagens.concluido > 0) {
