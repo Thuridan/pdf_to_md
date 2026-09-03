@@ -575,6 +575,17 @@ class TestEmpacotamento(unittest.TestCase):
         ):
             self.assertTrue((raiz / "fontes" / nome).is_file(), f"faltando frontend/fontes/{nome}")
 
+    def test_motor_pool_docstring_nao_cita_modulo_inexistente(self):
+        """BUG-23: docstring citava "webapp.main" - o modulo real e
+        backend.src.app (backend/src/services/motor_pool.py nem existiria
+        se webapp.main existisse; renomeado numa reestruturacao anterior)."""
+        conteudo = (
+            Path(__file__).resolve().parent
+            / "backend" / "src" / "services" / "motor_pool.py"
+        ).read_text(encoding="utf-8")
+        self.assertNotIn("webapp.main", conteudo)
+        self.assertIn("backend.src.app", conteudo)
+
     def test_frontend_avisa_sobre_perda_de_conexao(self):
         """BUG-20: o catch de atualizarFila() era vazio e carregarMotor() so
         rodava uma vez no load - se o servidor caisse, a UI seguia fazendo
