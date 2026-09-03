@@ -284,8 +284,8 @@ segue normalmente; a flag não altera o comportamento quando omitida.
 ## Testes
 
 ```bash
-python -m unittest test_pdf_to_md -v   # 87 testes (motor de conversão / CLI)
-python -m pytest backend/               # suíte da aplicação web (71 testes)
+python -m unittest test_pdf_to_md -v   # suíte do motor de conversão / CLI
+python -m pytest backend/               # suíte da aplicação web
 python scripts/verificar_api_docling.py <dir>  # confere a API do Docling estaticamente
 ```
 
