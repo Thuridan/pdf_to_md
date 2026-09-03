@@ -145,6 +145,39 @@ class TestFilaProcessamentoErro(_ComMotorStub):
             self.assertIsNone(job.caminho_saida)
 
 
+class TestProcessarResultadoPulado(unittest.TestCase):
+    """BUG-11: converter_arquivo() pode devolver status "pulado" (saida.md ja
+    existia, overwrite desligado) - _processar() jogava isso no mesmo "else"
+    de "erro", reportando "ja existe (use --overwrite)" como falha para um
+    resultado que, do ponto de vista do usuario, e sucesso (o arquivo que ele
+    queria ja esta la). Nao ha reenfileiramento hoje pela API publica -
+    _processar() e chamado diretamente para exercitar o caso, como uma
+    segunda passada hipotetica repetiria."""
+
+    def setUp(self):
+        self._motor_original = motor_pool._motor
+        self._cfg_original = motor_pool._cfg
+        motor_pool._motor = _MotorDeTeste()
+        motor_pool._cfg = m.Config()  # overwrite=False por padrao
+
+    def tearDown(self):
+        motor_pool._motor = self._motor_original
+        motor_pool._cfg = self._cfg_original
+
+    def test_segunda_passada_com_saida_ja_existente_conta_como_concluido(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            job = jobs.criar_job("a.pdf", b"%PDF-1.4", diretorio=Path(tmp))
+            jobs._processar(job.id)
+            self.assertEqual(job.status, "concluido")
+
+            job.status = "na_fila"  # simula um reprocessamento do mesmo job
+            jobs._processar(job.id)
+
+            self.assertEqual(job.status, "concluido")
+            self.assertEqual(job.mensagem_erro, "")
+            self.assertIsNotNone(job.caminho_saida)
+
+
 class TestFilaSobreviveAErroInesperado(unittest.TestCase):
     """BUG-01: uma excecao nao tratada (ex.: motor_pool.obter_motor() RuntimeError)
     nao pode matar a thread worker nem travar a fila para sempre."""

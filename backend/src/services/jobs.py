@@ -233,10 +233,17 @@ def _processar(job_id: str) -> None:
 
     resultado = m.converter_arquivo(job.caminho_pdf, saida, motor, cfg)
     job.segundos = resultado.segundos
-    if resultado.status == "ok":
+    if resultado.status in ("ok", "pulado"):
+        # "pulado" (saida.md ja existia, overwrite desligado) nao e uma falha
+        # do ponto de vista do usuario: o arquivo que ele queria ja esta la.
+        # A mensagem "ja existe (use --overwrite)" so faz sentido no
+        # contexto da CLI (onde --overwrite e uma flag que o usuario escolhe);
+        # na web nao ha reenfileiramento hoje, mas se um dia houver, isso
+        # evita reportar "erro" para um resultado que na pratica e sucesso.
         job.caminho_saida = resultado.saida
         job.status = "concluido"
-        _atualizar_estimativa(job)
+        if resultado.status == "ok":
+            _atualizar_estimativa(job)
     else:
         job.status = "erro"
         job.mensagem_erro = resultado.mensagem
