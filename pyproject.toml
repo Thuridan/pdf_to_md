@@ -8,7 +8,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "pdf-to-md"
-version = "2.1.0"
+# Uma unica fonte de verdade: pdf_to_md.__version__. Antes disso a versao
+# estava declarada em quatro lugares independentes (aqui, __version__, o
+# comentario "(v3.0)" do extra `web` abaixo, e fixa no HTML do frontend) -
+# ver [tool.setuptools.dynamic] no fim do arquivo.
+dynamic = ["version"]
 description = "Conversor de PDF para Markdown (Docling ou pypdfium2)."
 requires-python = ">=3.10"
 readme = "README.md"
@@ -28,7 +32,7 @@ simples = ["pypdfium2>=4,<6"]
 docling = ["docling[rapidocr]>=2.100,<3"]
 # Dependencias so para rodar a suite de testes (gera PDFs sinteticos).
 dev = ["fpdf2>=2.7,<3"]
-# Aplicacao web (v3.0): API FastAPI por cima do pdf_to_md.py existente.
+# Aplicacao web: API FastAPI por cima do pdf_to_md.py existente.
 # `pdf-to-md[simples]` garante que a aplicacao tenha ao menos um motor
 # funcional mesmo sem o extra `docling` (pesado, opt-in).
 # Este extra so traz as DEPENDENCIAS - o wheel nao empacota backend/ nem
@@ -47,3 +51,6 @@ pdf-to-md = "pdf_to_md:main"
 
 [tool.setuptools]
 py-modules = ["pdf_to_md"]
+
+[tool.setuptools.dynamic]
+version = {attr = "pdf_to_md.__version__"}

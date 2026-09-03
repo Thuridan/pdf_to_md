@@ -11,6 +11,7 @@ const downloadAllBtn = document.getElementById("download-all");
 const clearDoneBtn = document.getElementById("clear-done");
 const motorPill = document.getElementById("motor-pill");
 const themeToggle = document.getElementById("theme-toggle");
+const appVersionEl = document.getElementById("app-version");
 
 let jobsCache = [];
 
@@ -59,6 +60,20 @@ async function carregarMotor() {
     motorPill.textContent = `Motor: ${dados.engine}`;
   } catch (e) {
     motorPill.textContent = "Motor: indisponível";
+  }
+}
+
+// A versao vem de /api/health (pdf_to_md.__version__, a mesma fonte que
+// pyproject.toml le via [tool.setuptools.dynamic]) em vez de fixa no HTML -
+// evita o subtitulo dessincronizar do pacote de verdade rodando no servidor.
+async function carregarVersao() {
+  try {
+    const resp = await fetch("/api/health");
+    if (!resp.ok) throw new Error(String(resp.status));
+    const dados = await resp.json();
+    appVersionEl.textContent = `v${dados.version}`;
+  } catch (e) {
+    appVersionEl.textContent = "";
   }
 }
 
@@ -283,6 +298,7 @@ async function atualizarFila() {
 }
 
 carregarMotor();
+carregarVersao();
 (function agendar() {
   atualizarFila().finally(() => setTimeout(agendar, POLL_MS));
 })();

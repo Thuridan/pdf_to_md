@@ -498,6 +498,29 @@ class TestEmpacotamento(unittest.TestCase):
             f"extra 'web' deveria trazer o motor 'simples' de brinde, visto: {web}",
         )
 
+    def test_versao_e_dinamica_a_partir_de_pdf_to_md_dunder_version(self):
+        """BUG-15: a versao chegou a estar declarada em 4 lugares
+        independentes (pyproject.toml, __version__, um comentario e o HTML do
+        frontend) - uma unica fonte de verdade evita que voltem a divergir."""
+        projeto = self.pyproject["project"]
+        self.assertNotIn(
+            "version", projeto,
+            "version estatica em [project] junto com dynamic=['version'] "
+            "e invalido (pip rejeita o build)",
+        )
+        self.assertIn("version", projeto.get("dynamic", []))
+        self.assertEqual(
+            self.pyproject["tool"]["setuptools"]["dynamic"]["version"]["attr"],
+            "pdf_to_md.__version__",
+        )
+
+    def test_frontend_nao_tem_versao_fixa_no_html(self):
+        html = (Path(__file__).resolve().parent / "frontend" / "index.html").read_text(
+            encoding="utf-8"
+        )
+        self.assertNotIn("v3.0", html)
+        self.assertIn('id="app-version"', html)
+
 
 # ---------------------------------------------------------------------------
 # 7. CLI ponta a ponta (motor real pypdfium2)
