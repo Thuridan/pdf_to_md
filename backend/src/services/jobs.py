@@ -26,9 +26,10 @@ DIR_UPLOADS = Path(__file__).resolve().parents[2] / "uploads"
 
 STATUS_VALIDOS = {"na_fila", "processando", "concluido", "erro"}
 
-_SENTINEL = object()
-
 LOG = logging.getLogger(__name__)
+
+_SENTINEL = object()
+_parar_evento = threading.Event()
 
 # Estimativa de progresso: o Docling nao expoe callback nativo por pagina, entao
 # "pagina atual" e uma projecao por tempo decorrido (elapsed / segundos_por_pagina).
@@ -286,11 +287,25 @@ def _marcar_erro(job_id: str, mensagem: str) -> None:
 
 
 def _loop() -> None:
+    # _fila.get() continua bloqueando indefinidamente (sem timeout/polling) -
+    # zero custo extra enquanto a fila esta ociosa. O que muda e o que
+    # acontece ANTES de processar cada item: se _parar_evento ja estiver
+    # marcado, o item e descartado (nao processado) em vez de acionar o
+    # motor. Isso e o que faz o shutdown nao esperar um backlog inteiro
+    # drenar - o antigo _fila.put(_SENTINEL) colocava o sinal de parada no
+    # FIM da queue.Queue (FIFO), entao com jobs na frente ele so era
+    # alcancado depois de todos serem processados, e join(timeout=...)
+    # sempre estourava com backlog grande o bastante (a thread continuava
+    # viva, orfa, ainda mutando arquivos depois da funcao "retornar"). O
+    # job JA em andamento no momento do shutdown ainda termina (o check so
+    # acontece ANTES de processar o proximo), mas nada alem dele comeca.
     while True:
         item = _fila.get()
         try:
-            if item is _SENTINEL:
+            if _parar_evento.is_set():
                 return
+            if item is _SENTINEL:
+                continue
             _processar(item)  # type: ignore[arg-type]
         except Exception:
             LOG.exception("Falha inesperada ao processar %r", item)
@@ -304,15 +319,40 @@ def iniciar_worker() -> None:
     global _worker_thread
     if _worker_thread is not None and _worker_thread.is_alive():
         return
+    _parar_evento.clear()
     _worker_thread = threading.Thread(target=_loop, name="pdf-to-md-worker", daemon=True)
     _worker_thread.start()
 
 
 def parar_worker(timeout: float = 5.0) -> None:
-    """Sinaliza a thread worker para parar e aguarda o termino (usado no shutdown do app)."""
+    """Sinaliza a thread worker para parar e aguarda o termino (usado no shutdown do app).
+
+    So marca _worker_thread como None se a thread realmente terminou dentro
+    do timeout - do contrario ela continua rodando (orfa) e uma chamada
+    subsequente a iniciar_worker() nao deve fingir que esta livre pra subir
+    uma segunda thread consumindo a mesma fila.
+    """
     global _worker_thread
     if _worker_thread is None:
         return
-    _fila.put(_SENTINEL)
+    _parar_evento.set()
+    _fila.put(_SENTINEL)  # acorda o get() bloqueado, mesmo se a fila estava vazia
     _worker_thread.join(timeout=timeout)
+    if _worker_thread.is_alive():
+        return
     _worker_thread = None
+    _drenar_fila_abandonada()
+
+
+def _drenar_fila_abandonada() -> None:
+    """Descarta qualquer item deixado na fila apos um shutdown que abandonou
+    o backlog (ver parar_worker) - sem isso, um iniciar_worker() seguinte
+    processaria job_ids de uma sessao/teste anterior, possivelmente
+    apontando pra arquivos que ja nao existem mais em disco."""
+    while True:
+        try:
+            _fila.get_nowait()
+        except queue.Empty:
+            return
+        else:
+            _fila.task_done()

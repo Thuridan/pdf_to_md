@@ -4,6 +4,7 @@
 
 from __future__ import annotations
 
+import queue
 import sys
 import tempfile
 import time
@@ -109,6 +110,66 @@ class _ComMotorStub(unittest.TestCase):
         motor_pool._motor = self._motor_original
         motor_pool._cfg = self._cfg_original
         jobs._segundos_por_pagina = self._ema_original
+
+
+class TestPararWorkerComBacklog(unittest.TestCase):
+    """BUG-22: parar_worker() colocava um sentinela no FIM da queue.Queue
+    (FIFO) - com backlog na frente, ele so era alcancado depois de a fila
+    inteira drenar, entao join(timeout=...) estourava sempre que o backlog
+    demorasse mais que o timeout. A thread continuava viva (daemon, orfa)
+    mesmo com _worker_thread ja setado pra None."""
+
+    def setUp(self):
+        self._motor_original = motor_pool._motor
+        self._cfg_original = motor_pool._cfg
+        self.motor = _MotorDeTeste(atraso=0.3)
+        motor_pool._motor = self.motor
+        motor_pool._cfg = m.Config()
+        # este teste deliberadamente ABANDONA um backlog na fila (e esse e o
+        # ponto do teste) - troca a fila global por uma isolada, senao os
+        # itens que sobram vazam pro proximo teste e o worker deles processa
+        # jobs de um diretorio temporario ja limpo.
+        self._fila_original = jobs._fila
+        jobs._fila = queue.Queue()
+
+    def tearDown(self):
+        jobs.parar_worker()
+        jobs._fila = self._fila_original
+        motor_pool._motor = self._motor_original
+        motor_pool._cfg = self._cfg_original
+
+    def test_para_rapido_mesmo_com_backlog_maior_que_o_timeout(self):
+        jobs.iniciar_worker()
+        with tempfile.TemporaryDirectory() as tmp:
+            criados = []
+            for i in range(6):  # 6 * 0.3s = ~1.8s pra drenar tudo
+                job = jobs.criar_job(f"a{i}.pdf", b"%PDF-1.4", diretorio=Path(tmp))
+                jobs.enfileirar(job.id)
+                criados.append(job)
+
+            inicio = time.monotonic()
+            jobs.parar_worker(timeout=1.0)
+            decorrido = time.monotonic() - inicio
+
+            # nao deveria se aproximar de 1.8s (tempo pra drenar o backlog
+            # inteiro) - o shutdown e limitado pelo polling do loop, nao pelo
+            # tamanho da fila.
+            self.assertLess(decorrido, 1.0)
+            self.assertIsNone(jobs._worker_thread)
+
+            concluidos = sum(1 for j in criados if j.status == "concluido")
+            self.assertEqual(
+                concluidos, 1,
+                "so o job ja em andamento no momento do shutdown deveria terminar",
+            )
+
+    def test_reiniciar_apos_parar_nao_duplica_a_thread_worker(self):
+        jobs.iniciar_worker()
+        jobs.parar_worker()
+        jobs.iniciar_worker()
+        primeira = jobs._worker_thread
+        jobs.iniciar_worker()  # idempotente: nao deveria trocar a thread
+        self.assertIs(jobs._worker_thread, primeira)
 
 
 class TestFilaProcessamentoOk(_ComMotorStub):
