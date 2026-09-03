@@ -41,6 +41,19 @@ def _gerar_pdf_valido(caminho: Path, paginas: int = 1) -> None:
     pdf.output(str(caminho))
 
 
+def _escrever_e_criar_job(nome_original: str, conteudo: bytes, *, diretorio: Path) -> jobs.Job:
+    """Helper de teste: grava `conteudo` num arquivo em `diretorio` e registra
+    um Job para ele. jobs.criar_job() passou a receber um caminho ja gravado
+    em vez de bytes (TAREFA-1: quem grava os bytes de um upload real e
+    api._gravar_upload_com_teto(), direto em disco em blocos, sem
+    materializar o arquivo inteiro em memoria) - este helper reproduz pros
+    testes existentes o "escreve bytes + registra" que criar_job fazia antes
+    num so passo."""
+    _job_id, caminho = jobs.alocar_caminho_pdf(diretorio=diretorio)
+    caminho.write_bytes(conteudo)
+    return jobs.criar_job(nome_original, caminho)
+
+
 class _MotorDeTeste(m.MotorBase):
     """Motor stub: registra a ordem de chamadas, sem tocar em Docling/pypdfium2."""
 
@@ -65,7 +78,7 @@ class _MotorDeTeste(m.MotorBase):
 class TestCriarJob(unittest.TestCase):
     def test_grava_pdf_em_disco_e_registra_com_status_na_fila(self):
         with tempfile.TemporaryDirectory() as tmp:
-            job = jobs.criar_job("relatorio.pdf", b"%PDF-1.4 conteudo", diretorio=Path(tmp))
+            job = _escrever_e_criar_job("relatorio.pdf", b"%PDF-1.4 conteudo", diretorio=Path(tmp))
 
             self.assertEqual(job.status, "na_fila")
             self.assertEqual(job.nome_original, "relatorio.pdf")
@@ -75,8 +88,8 @@ class TestCriarJob(unittest.TestCase):
 
     def test_ids_gerados_sao_unicos(self):
         with tempfile.TemporaryDirectory() as tmp:
-            a = jobs.criar_job("a.pdf", b"x", diretorio=Path(tmp))
-            b = jobs.criar_job("b.pdf", b"y", diretorio=Path(tmp))
+            a = _escrever_e_criar_job("a.pdf", b"x", diretorio=Path(tmp))
+            b = _escrever_e_criar_job("b.pdf", b"y", diretorio=Path(tmp))
             self.assertNotEqual(a.id, b.id)
 
 
@@ -145,7 +158,7 @@ class TestPararWorkerComBacklog(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             criados = []
             for i in range(6):  # 6 * 0.3s = ~1.8s pra drenar tudo
-                job = jobs.criar_job(f"a{i}.pdf", b"%PDF-1.4", diretorio=Path(tmp))
+                job = _escrever_e_criar_job(f"a{i}.pdf", b"%PDF-1.4", diretorio=Path(tmp))
                 jobs.enfileirar(job.id)
                 criados.append(job)
 
@@ -177,8 +190,8 @@ class TestPararWorkerComBacklog(unittest.TestCase):
 class TestFilaProcessamentoOk(_ComMotorStub):
     def test_dois_jobs_processam_em_serie_na_ordem_de_chegada(self):
         with tempfile.TemporaryDirectory() as tmp:
-            j1 = jobs.criar_job("a.pdf", b"%PDF-1.4", diretorio=Path(tmp))
-            j2 = jobs.criar_job("b.pdf", b"%PDF-1.4", diretorio=Path(tmp))
+            j1 = _escrever_e_criar_job("a.pdf", b"%PDF-1.4", diretorio=Path(tmp))
+            j2 = _escrever_e_criar_job("b.pdf", b"%PDF-1.4", diretorio=Path(tmp))
 
             # enfileirar() nunca bloqueia - as duas chamadas voltam na hora,
             # mesmo com o worker ainda processando o primeiro job.
@@ -200,7 +213,7 @@ class TestFilaProcessamentoErro(_ComMotorStub):
 
     def test_job_com_erro_de_conversao_fica_com_status_erro(self):
         with tempfile.TemporaryDirectory() as tmp:
-            job = jobs.criar_job("ruim.pdf", b"%PDF-1.4", diretorio=Path(tmp))
+            job = _escrever_e_criar_job("ruim.pdf", b"%PDF-1.4", diretorio=Path(tmp))
             jobs.enfileirar(job.id)
 
             self.assertTrue(_aguardar(lambda: job.status == "erro"))
@@ -229,7 +242,7 @@ class TestProcessarResultadoPulado(unittest.TestCase):
 
     def test_segunda_passada_com_saida_ja_existente_conta_como_concluido(self):
         with tempfile.TemporaryDirectory() as tmp:
-            job = jobs.criar_job("a.pdf", b"%PDF-1.4", diretorio=Path(tmp))
+            job = _escrever_e_criar_job("a.pdf", b"%PDF-1.4", diretorio=Path(tmp))
             jobs._processar(job.id)
             self.assertEqual(job.status, "concluido")
 
@@ -269,9 +282,9 @@ class TestFilaSobreviveAErroInesperado(unittest.TestCase):
         motor_pool.obter_motor = obter_motor_com_falha_no_segundo
 
         with tempfile.TemporaryDirectory() as tmp:
-            a = jobs.criar_job("a.pdf", b"%PDF-1.4", diretorio=Path(tmp))
-            b = jobs.criar_job("b.pdf", b"%PDF-1.4", diretorio=Path(tmp))
-            c = jobs.criar_job("c.pdf", b"%PDF-1.4", diretorio=Path(tmp))
+            a = _escrever_e_criar_job("a.pdf", b"%PDF-1.4", diretorio=Path(tmp))
+            b = _escrever_e_criar_job("b.pdf", b"%PDF-1.4", diretorio=Path(tmp))
+            c = _escrever_e_criar_job("c.pdf", b"%PDF-1.4", diretorio=Path(tmp))
 
             jobs.enfileirar(a.id)
             jobs.enfileirar(b.id)
@@ -409,7 +422,7 @@ class TestRemoverSeNaoProcessandoSobContencao(unittest.TestCase):
         violacoes = []
         with tempfile.TemporaryDirectory() as tmp:
             for i in range(30):
-                job = jobs.criar_job(f"a{i}.pdf", b"%PDF-1.4", diretorio=Path(tmp))
+                job = _escrever_e_criar_job(f"a{i}.pdf", b"%PDF-1.4", diretorio=Path(tmp))
                 jobs.enfileirar(job.id)
                 time.sleep(0.005)  # deixa o worker ter uma chance real de pegar o job
 
@@ -431,7 +444,7 @@ class TestFilaAtualizaProgresso(_ComMotorStub):
             caminho_pdf = Path(tmp) / "fonte.pdf"
             _gerar_pdf_valido(caminho_pdf, paginas=2)
 
-            job = jobs.criar_job(
+            job = _escrever_e_criar_job(
                 "relatorio.pdf", caminho_pdf.read_bytes(), diretorio=Path(tmp) / "uploads"
             )
             self.assertEqual(job.paginas_totais, 2)
@@ -450,14 +463,14 @@ class TestCriarJobPaginas(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             caminho_pdf = Path(tmp) / "fonte.pdf"
             _gerar_pdf_valido(caminho_pdf, paginas=3)
-            job = jobs.criar_job(
+            job = _escrever_e_criar_job(
                 "doc.pdf", caminho_pdf.read_bytes(), diretorio=Path(tmp) / "uploads"
             )
             self.assertEqual(job.paginas_totais, 3)
 
     def test_pdf_invalido_deixa_paginas_totais_none(self):
         with tempfile.TemporaryDirectory() as tmp:
-            job = jobs.criar_job("ruim.pdf", b"nao e um pdf de verdade", diretorio=Path(tmp))
+            job = _escrever_e_criar_job("ruim.pdf", b"nao e um pdf de verdade", diretorio=Path(tmp))
             self.assertIsNone(job.paginas_totais)
 
 
@@ -553,9 +566,9 @@ class TestPosicaoNaFila(unittest.TestCase):
 
     def test_posicoes_seguem_ordem_de_criacao_entre_os_na_fila(self):
         with tempfile.TemporaryDirectory() as tmp:
-            a = jobs.criar_job("a.pdf", b"x", diretorio=Path(tmp))
-            b = jobs.criar_job("b.pdf", b"y", diretorio=Path(tmp))
-            c = jobs.criar_job("c.pdf", b"z", diretorio=Path(tmp))
+            a = _escrever_e_criar_job("a.pdf", b"x", diretorio=Path(tmp))
+            b = _escrever_e_criar_job("b.pdf", b"y", diretorio=Path(tmp))
+            c = _escrever_e_criar_job("c.pdf", b"z", diretorio=Path(tmp))
             b.status = "processando"  # sai da contagem de na_fila
 
             posicoes = jobs._posicoes_na_fila()
@@ -565,7 +578,7 @@ class TestPosicaoNaFila(unittest.TestCase):
 
     def test_listar_com_progresso_inclui_posicao_so_para_na_fila(self):
         with tempfile.TemporaryDirectory() as tmp:
-            jobs.criar_job("a.pdf", b"x", diretorio=Path(tmp))
+            _escrever_e_criar_job("a.pdf", b"x", diretorio=Path(tmp))
             lista = jobs.listar_com_progresso()
             self.assertEqual(lista[0]["posicao_na_fila"], 1)
 

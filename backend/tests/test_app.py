@@ -4,9 +4,11 @@
 
 from __future__ import annotations
 
+import asyncio
 import io
 import sys
 import tempfile
+import tracemalloc
 import unittest
 import zipfile
 from pathlib import Path
@@ -16,6 +18,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 import pdf_to_md as m  # noqa: E402
 
 from fastapi.testclient import TestClient  # noqa: E402
+from starlette.datastructures import UploadFile  # noqa: E402
 
 from backend.src.routes import api  # noqa: E402
 from backend.src.services import jobs, motor_pool  # noqa: E402
@@ -176,6 +179,76 @@ class TestCriarJobsEndpoint(unittest.TestCase):
         with TestClient(app) as cliente:
             resposta = cliente.get("/api/jobs/nao-existe")
         self.assertEqual(resposta.status_code, 404)
+
+
+class TestGravacaoDeUploadEmDisco(unittest.TestCase):
+    """TAREFA-1 (rodada 3): api.criar_jobs() acumulava o upload inteiro em
+    bytes (`await arquivo.read()`) antes de gravar em disco - com o teto
+    elevado a centenas de MB (TAREFA-2), uploads simultaneos escalam RAM
+    linearmente com o tamanho do arquivo, nao com o numero de uploads.
+    _gravar_upload_com_teto() agora grava direto em disco em blocos."""
+
+    TAMANHO = 20 * 1024 * 1024  # 20 MiB - grande o bastante pra evidenciar a
+    # diferenca (pico antigo ~2x isso; novo pico fica perto de 1 bloco), sem
+    # deixar o teste lento.
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self._dir_original = jobs.DIR_UPLOADS
+        jobs.DIR_UPLOADS = Path(self._tmp.name)
+
+        self._origem = Path(self._tmp.name) / "origem.bin"
+        with self._origem.open("wb") as f:
+            restante = self.TAMANHO
+            while restante > 0:
+                bloco = min(1024 * 1024, restante)
+                f.write(b"X" * bloco)
+                restante -= bloco
+
+    def tearDown(self):
+        jobs.DIR_UPLOADS = self._dir_original
+        self._tmp.cleanup()
+
+    def test_gravacao_nao_materializa_o_upload_inteiro_em_memoria(self):
+        async def rodar():
+            with self._origem.open("rb") as handle:
+                arquivo = UploadFile(file=handle, filename="grande.pdf")
+                tracemalloc.start()
+                try:
+                    return await api._gravar_upload_com_teto(arquivo, api.MAX_UPLOAD_BYTES)
+                finally:
+                    _atual, self.pico = tracemalloc.get_traced_memory()
+                    tracemalloc.stop()
+
+        caminho = asyncio.run(rodar())
+
+        self.assertIsNotNone(caminho)
+        self.assertEqual(caminho.stat().st_size, self.TAMANHO)
+        # pico bem abaixo do tamanho do arquivo (nao ~2x, como a versao que
+        # acumulava bytes) - uma folga generosa (metade do arquivo) evita um
+        # teste flaky por overhead incidental do interpretador/tracemalloc.
+        self.assertLess(self.pico, self.TAMANHO / 2)
+
+    def test_tamanho_bytes_do_job_vem_do_arquivo_gravado(self):
+        async def rodar():
+            with self._origem.open("rb") as handle:
+                arquivo = UploadFile(file=handle, filename="grande.pdf")
+                return await api._gravar_upload_com_teto(arquivo, api.MAX_UPLOAD_BYTES)
+
+        caminho = asyncio.run(rodar())
+        job = jobs.criar_job("grande.pdf", caminho)
+        self.assertEqual(job.tamanho_bytes, self.TAMANHO)
+
+    def test_arquivo_acima_do_teto_nao_deixa_residuo(self):
+        async def rodar():
+            with self._origem.open("rb") as handle:
+                arquivo = UploadFile(file=handle, filename="grande.pdf")
+                return await api._gravar_upload_com_teto(arquivo, self.TAMANHO // 2)
+
+        resultado = asyncio.run(rodar())
+
+        self.assertIsNone(resultado)
+        self.assertEqual(list(jobs.DIR_UPLOADS.glob("*.pdf")), [])
 
 
 class TestLimitesDeUpload(unittest.TestCase):

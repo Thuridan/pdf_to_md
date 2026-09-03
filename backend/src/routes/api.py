@@ -49,20 +49,28 @@ def _nome_saida_seguro(nome_original: str, job_id: str) -> str:
     return nome or f"{job_id[:8]}.md"
 
 
-async def _ler_com_teto(arquivo: UploadFile, teto: int) -> bytes | None:
-    """Le em blocos (nunca `arquivo.read()` de uma vez) e desiste assim que o
-    teto e ultrapassado, sem acumular o restante do arquivo em memoria."""
-    partes: list[bytes] = []
+async def _gravar_upload_com_teto(arquivo: UploadFile, teto: int) -> Path | None:
+    """Grava o upload direto em disco, em blocos de _TAMANHO_BLOCO, sem
+    NUNCA materializar o arquivo inteiro em memoria (nem em bytes, nem numa
+    lista de blocos) - com o teto elevado a centenas de MB (TAREFA-2), a
+    materializacao antiga escalava com o tamanho do arquivo, nao com o
+    numero de uploads simultaneos. O teto e imposto DURANTE a escrita:
+    ultrapassou, aborta e remove o arquivo parcial - nunca fica residuo em
+    DIR_UPLOADS. Devolve o caminho gravado, ou None se excedeu o teto."""
+    _job_id, caminho = jobs.alocar_caminho_pdf()
     total = 0
-    while True:
-        bloco = await arquivo.read(_TAMANHO_BLOCO)
-        if not bloco:
-            break
-        total += len(bloco)
-        if total > teto:
-            return None
-        partes.append(bloco)
-    return b"".join(partes)
+    with caminho.open("wb") as destino:
+        while True:
+            bloco = await arquivo.read(_TAMANHO_BLOCO)
+            if not bloco:
+                break
+            total += len(bloco)
+            if total > teto:
+                destino.close()
+                caminho.unlink(missing_ok=True)
+                return None
+            destino.write(bloco)
+    return caminho
 
 
 @router.get("/api/health")
@@ -102,14 +110,14 @@ async def criar_jobs(files: list[UploadFile] = File(...)) -> dict:
                 "motivo": f"lote excede o limite de {MAX_UPLOAD_ARQUIVOS} arquivos",
             })
             continue
-        conteudo = await _ler_com_teto(arquivo, MAX_UPLOAD_BYTES)
-        if conteudo is None:
+        caminho_pdf = await _gravar_upload_com_teto(arquivo, MAX_UPLOAD_BYTES)
+        if caminho_pdf is None:
             rejeitados.append({
                 "nome_original": nome,
                 "motivo": f"excede o limite de {MAX_UPLOAD_BYTES} bytes",
             })
             continue
-        job = jobs.criar_job(nome, conteudo)
+        job = jobs.criar_job(nome, caminho_pdf)
         jobs.enfileirar(job.id)
         criados.append(job.to_dict())
     return {"criados": criados, "rejeitados": rejeitados}

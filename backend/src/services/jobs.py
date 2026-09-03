@@ -133,27 +133,39 @@ def obter_store() -> JobStore:
     return _store
 
 
-def criar_job(nome_original: str, conteudo: bytes, *, diretorio: Path | None = None) -> Job:
-    """Grava o PDF em disco e registra um novo job com status 'na_fila'."""
+def alocar_caminho_pdf(*, diretorio: Path | None = None) -> tuple[str, Path]:
+    """Gera um job_id novo e o caminho onde seu PDF deve ser gravado (criando
+    o diretorio se preciso). Separado de criar_job() de proposito: quem grava
+    os bytes de um upload real (ver api._gravar_upload_com_teto - direto do
+    UploadFile, em blocos, sem materializar o arquivo inteiro em memoria)
+    precisa do caminho ANTES de o Job existir, e so registra o Job depois que
+    a escrita (e a checagem de teto) terminarem com sucesso."""
     alvo = diretorio or DIR_UPLOADS
     alvo.mkdir(parents=True, exist_ok=True)
     job_id = uuid.uuid4().hex
-    caminho = alvo / f"{job_id}.pdf"
-    caminho.write_bytes(conteudo)
+    return job_id, alvo / f"{job_id}.pdf"
+
+
+def criar_job(nome_original: str, caminho_pdf: Path) -> Job:
+    """Registra um novo job 'na_fila' para um PDF JA GRAVADO em disco em
+    caminho_pdf (ver alocar_caminho_pdf() para gerar job_id + caminho antes
+    de escrever). O job_id e o nome do arquivo sem extensao."""
+    job_id = caminho_pdf.stem
+    tamanho_bytes = caminho_pdf.stat().st_size
     # Checagem barata (pypdfium2, sem carregar modelos) - mesma usada por --max-pages
     # na CLI, mas aqui e so para estimar progresso na UI: um PDF ilegivel pelo
     # pypdfium2 (m.PdfIlegivel) vira paginas_totais=None em vez de propagar -
     # quem decide se isso e motivo de erro e converter_arquivo(), via cfg.max_pages.
     try:
-        paginas = m.contar_paginas(caminho)
+        paginas = m.contar_paginas(caminho_pdf)
     except m.PdfIlegivel:
         paginas = None
     job = Job(
         id=job_id,
         nome_original=nome_original,
-        caminho_pdf=caminho,
+        caminho_pdf=caminho_pdf,
         paginas_totais=paginas,
-        tamanho_bytes=len(conteudo),
+        tamanho_bytes=tamanho_bytes,
     )
     _store.adicionar(job)
     return job
