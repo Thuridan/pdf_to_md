@@ -10,10 +10,17 @@ so existe UMA instancia por processo, reaproveitada por todos os jobs
 
 from __future__ import annotations
 
+import os
+
 import pdf_to_md as m
 
 _motor: m.MotorBase | None = None
 _cfg: m.Config | None = None
+
+# A superficie web recebe arquivo de terceiro - ao contrario da CLI, precisa
+# de um teto por padrao (--max-pages existe desde sempre, mas so a CLI o
+# ligava explicitamente). Documentado em dependencies.md.
+_MAX_PAGINAS_PADRAO = int(os.getenv("MAX_UPLOAD_PAGES", "500"))
 
 
 def inicializar(cfg: m.Config | None = None) -> m.MotorBase:
@@ -24,7 +31,7 @@ def inicializar(cfg: m.Config | None = None) -> m.MotorBase:
     MotorDocling._obter_converter) - aqui so decidimos QUAL motor usar.
     """
     global _motor, _cfg
-    _cfg = cfg if cfg is not None else m.Config()
+    _cfg = cfg if cfg is not None else m.Config(max_pages=_MAX_PAGINAS_PADRAO)
     m.aplicar_ambiente(_cfg)
     _motor = m.selecionar_motor(_cfg)
     return _motor

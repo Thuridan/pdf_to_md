@@ -110,6 +110,9 @@ Duas particularidades documentadas nesse arquivo:
 | `TOKENIZERS_PARALLELISM` | `aplicar_ambiente()` (sempre `"false"`, via `setdefault`) | Evita o aviso de fork do tokenizers do Hugging Face. |
 | `HF_HUB_OFFLINE`, `TRANSFORMERS_OFFLINE` | `aplicar_ambiente()`, só se `Config.offline=True` | Bloqueia o Hugging Face Hub de checar atualizações de modelo (layout/TableFormer). Não afeta o RapidOCR, cujos modelos vêm do ModelScope. |
 | `HOST`, `PORT` | lidas por `start.sh`/`restart.sh` (não pelo Python) | Endereço/porta do uvicorn ao subir a aplicação web; padrão `0.0.0.0:8000` (todas as interfaces). |
+| `MAX_UPLOAD_BYTES` | `backend/src/routes/api.py`, lida no import do módulo | Teto de tamanho por arquivo em `POST /api/jobs`; acima disso o arquivo vai para `rejeitados` sem ser gravado em disco. Padrão `104857600` (100 MiB). |
+| `MAX_UPLOAD_FILES` | `backend/src/routes/api.py`, lida no import do módulo | Teto de quantidade de arquivos aceitos por lote em `POST /api/jobs`; o excedente vai para `rejeitados`. Padrão `50`. |
+| `MAX_UPLOAD_PAGES` | `backend/src/services/motor_pool.py`, lida no import do módulo | Vira `Config.max_pages` do motor da aplicação web (a CLI não usa esta variável — lá quem decide é `--max-pages`, desligado por padrão). Padrão `500`. |
 
 ## Entry point
 

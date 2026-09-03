@@ -6,6 +6,7 @@ backend.src.services. Nenhuma logica de negocio mora aqui."""
 from __future__ import annotations
 
 import io
+import os
 import zipfile
 from pathlib import Path
 
@@ -16,6 +17,30 @@ import pdf_to_md
 from backend.src.services import jobs, motor_pool
 
 router = APIRouter()
+
+# Superficie web = entrada de terceiro, ao contrario da CLI. Sem teto, um
+# unico upload grande o bastante estoura a memoria do processo, e um lote
+# grande o bastante ocupa a thread worker unica por muito tempo. Documentado
+# em dependencies.md.
+MAX_UPLOAD_BYTES = int(os.getenv("MAX_UPLOAD_BYTES", str(100 * 1024 * 1024)))
+MAX_UPLOAD_ARQUIVOS = int(os.getenv("MAX_UPLOAD_FILES", "50"))
+_TAMANHO_BLOCO = 1024 * 1024
+
+
+async def _ler_com_teto(arquivo: UploadFile, teto: int) -> bytes | None:
+    """Le em blocos (nunca `arquivo.read()` de uma vez) e desiste assim que o
+    teto e ultrapassado, sem acumular o restante do arquivo em memoria."""
+    partes: list[bytes] = []
+    total = 0
+    while True:
+        bloco = await arquivo.read(_TAMANHO_BLOCO)
+        if not bloco:
+            break
+        total += len(bloco)
+        if total > teto:
+            return None
+        partes.append(bloco)
+    return b"".join(partes)
 
 
 @router.get("/api/health")
@@ -42,7 +67,19 @@ async def criar_jobs(files: list[UploadFile] = File(...)) -> dict:
         if Path(nome).suffix.lower() not in pdf_to_md.SUFIXOS_PDF:
             rejeitados.append({"nome_original": nome, "motivo": "nao e um PDF"})
             continue
-        conteudo = await arquivo.read()
+        if len(criados) >= MAX_UPLOAD_ARQUIVOS:
+            rejeitados.append({
+                "nome_original": nome,
+                "motivo": f"lote excede o limite de {MAX_UPLOAD_ARQUIVOS} arquivos",
+            })
+            continue
+        conteudo = await _ler_com_teto(arquivo, MAX_UPLOAD_BYTES)
+        if conteudo is None:
+            rejeitados.append({
+                "nome_original": nome,
+                "motivo": f"excede o limite de {MAX_UPLOAD_BYTES} bytes",
+            })
+            continue
         job = jobs.criar_job(nome, conteudo)
         jobs.enfileirar(job.id)
         criados.append(job.to_dict())

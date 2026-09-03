@@ -17,6 +17,7 @@ import pdf_to_md as m  # noqa: E402
 
 from fastapi.testclient import TestClient  # noqa: E402
 
+from backend.src.routes import api  # noqa: E402
 from backend.src.services import jobs, motor_pool  # noqa: E402
 from backend.src.app import app  # noqa: E402
 
@@ -142,6 +143,66 @@ class TestCriarJobsEndpoint(unittest.TestCase):
         with TestClient(app) as cliente:
             resposta = cliente.get("/api/jobs/nao-existe")
         self.assertEqual(resposta.status_code, 404)
+
+
+class TestLimitesDeUpload(unittest.TestCase):
+    """BUG-03: sem teto de tamanho por arquivo e de quantidade por lote, um
+    upload grande o bastante estoura a memoria do processo e ocupa a thread
+    worker unica indefinidamente. Tetos pequenos aqui so para o teste ser
+    rapido - o padrao de producao fica em MAX_UPLOAD_BYTES/MAX_UPLOAD_FILES."""
+
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self._dir_original = jobs.DIR_UPLOADS
+        jobs.DIR_UPLOADS = Path(self._tmp.name)
+
+        self._inicializar_original = motor_pool.inicializar
+        self._patcher = patch.object(
+            motor_pool, "inicializar",
+            lambda cfg=None: self._inicializar_original(m.Config(engine="simples")),
+        )
+        self._patcher.start()
+
+        self._bytes_original = api.MAX_UPLOAD_BYTES
+        self._arquivos_original = api.MAX_UPLOAD_ARQUIVOS
+        api.MAX_UPLOAD_BYTES = 1024
+        api.MAX_UPLOAD_ARQUIVOS = 2
+
+    def tearDown(self):
+        api.MAX_UPLOAD_BYTES = self._bytes_original
+        api.MAX_UPLOAD_ARQUIVOS = self._arquivos_original
+        self._patcher.stop()
+        jobs.DIR_UPLOADS = self._dir_original
+        self._tmp.cleanup()
+
+    def test_arquivo_acima_do_teto_de_tamanho_e_rejeitado_sem_gravar_nada(self):
+        with TestClient(app) as cliente:
+            resposta = cliente.post(
+                "/api/jobs",
+                files={"files": ("grande.pdf", b"X" * 2048, "application/pdf")},
+            )
+        self.assertEqual(resposta.status_code, 200)
+        corpo = resposta.json()
+        self.assertEqual(corpo["criados"], [])
+        self.assertEqual(len(corpo["rejeitados"]), 1)
+        self.assertIn("1024", corpo["rejeitados"][0]["motivo"])
+        self.assertEqual(list(Path(self._tmp.name).glob("*.pdf")), [])
+
+    def test_lote_acima_do_teto_de_quantidade_rejeita_o_excedente(self):
+        with TestClient(app) as cliente:
+            resposta = cliente.post(
+                "/api/jobs",
+                files=[
+                    ("files", ("a.pdf", b"%PDF-1.4", "application/pdf")),
+                    ("files", ("b.pdf", b"%PDF-1.4", "application/pdf")),
+                    ("files", ("c.pdf", b"%PDF-1.4", "application/pdf")),
+                ],
+            )
+        self.assertEqual(resposta.status_code, 200)
+        corpo = resposta.json()
+        self.assertEqual(len(corpo["criados"]), 2)
+        self.assertEqual(len(corpo["rejeitados"]), 1)
+        self.assertEqual(corpo["rejeitados"][0]["nome_original"], "c.pdf")
 
 
 class TestDownloadEndpoints(unittest.TestCase):
