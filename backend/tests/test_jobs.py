@@ -262,6 +262,69 @@ class TestOrdemDeAtribuicaoDoJob(_ComMotorStub):
             self.assertIsNotNone(job.caminho_saida)
 
 
+class TestRemoverSeNaoProcessando(unittest.TestCase):
+    """BUG-12: TOCTOU entre checar job.status == 'processando' e chamar
+    jobs.remover() como duas operacoes separadas - o worker podia comecar a
+    processar o job nesse intervalo, e o remover() subsequente apagava o PDF
+    por baixo de uma conversao em andamento (e tirava o job do store
+    enquanto o worker ainda estava mutando o mesmo objeto Job)."""
+
+    def test_recusa_remover_job_processando_e_nao_apaga_nada(self):
+        store = jobs.JobStore()
+        job = jobs.Job(id="1", nome_original="a.pdf", caminho_pdf=Path("a.pdf"), status="processando")
+        store.adicionar(job)
+        self.assertIsNone(store.remover_se_nao_processando("1"))
+        self.assertIsNotNone(store.obter("1"))
+
+    def test_remove_job_que_nao_esta_processando(self):
+        store = jobs.JobStore()
+        job = jobs.Job(id="1", nome_original="a.pdf", caminho_pdf=Path("a.pdf"), status="na_fila")
+        store.adicionar(job)
+        removido = store.remover_se_nao_processando("1")
+        self.assertIs(removido, job)
+        self.assertIsNone(store.obter("1"))
+
+    def test_job_inexistente_devolve_none(self):
+        self.assertIsNone(jobs.JobStore().remover_se_nao_processando("nao-existe"))
+
+
+class TestRemoverSeNaoProcessandoSobContencao(unittest.TestCase):
+    """Melhor esforco sob concorrencia real (worker + stub motor com atraso),
+    no mesmo espirito do teste de BUG-06: nao garante disparar a janela em
+    toda execucao, mas adiciona sinal real sem sleep/instrumentacao em
+    codigo de producao."""
+
+    def setUp(self):
+        self._motor_original = motor_pool._motor
+        self._cfg_original = motor_pool._cfg
+        self.motor = _MotorDeTeste(atraso=0.03)
+        motor_pool._motor = self.motor
+        motor_pool._cfg = m.Config()
+        jobs.iniciar_worker()
+
+    def tearDown(self):
+        jobs.parar_worker()
+        motor_pool._motor = self._motor_original
+        motor_pool._cfg = self._cfg_original
+
+    def test_delete_concorrente_com_worker_nunca_apaga_pdf_de_job_processando(self):
+        violacoes = []
+        with tempfile.TemporaryDirectory() as tmp:
+            for i in range(30):
+                job = jobs.criar_job(f"a{i}.pdf", b"%PDF-1.4", diretorio=Path(tmp))
+                jobs.enfileirar(job.id)
+                time.sleep(0.005)  # deixa o worker ter uma chance real de pegar o job
+
+                removido = jobs.remover_se_nao_processando(job.id)
+                if removido is None:
+                    atual = jobs.obter_store().obter(job.id)
+                    if atual is not None and atual.status == "processando" and not job.caminho_pdf.exists():
+                        violacoes.append((i, "job processando com PDF ja apagado"))
+                time.sleep(0.04)  # deixa o job em andamento terminar antes do proximo
+
+        self.assertEqual(violacoes, [])
+
+
 class TestFilaAtualizaProgresso(_ComMotorStub):
     """Step 5, ponta a ponta pelo worker real: paginas_totais e a media movel."""
 

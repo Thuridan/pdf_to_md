@@ -102,6 +102,22 @@ class JobStore:
         with self._lock:
             self._jobs.pop(job_id, None)
 
+    def remover_se_nao_processando(self, job_id: str) -> "Job | None":
+        """Remove atomicamente (sob o mesmo lock) SE o job existir e nao
+        estiver 'processando'. Devolve o Job removido, para o chamador apagar
+        os arquivos em disco, ou None se nao encontrado ou em processamento -
+        nesses dois casos nada e removido. Existe para fechar o TOCTOU entre
+        checar o status e remover: checar-e-depois-remover como duas
+        operacoes separadas dava ao worker uma janela para comecar a
+        processar o job entre as duas, e o remover() subsequente apagava o
+        PDF por baixo de uma conversao em andamento."""
+        with self._lock:
+            job = self._jobs.get(job_id)
+            if job is None or job.status == "processando":
+                return None
+            del self._jobs[job_id]
+            return job
+
     def listar(self) -> list[Job]:
         with self._lock:
             return list(self._jobs.values())
@@ -172,6 +188,19 @@ def remover(job_id: str) -> None:
     _apagar_arquivo(job.caminho_pdf)
     _apagar_arquivo(job.caminho_saida)
     _store.remover(job_id)
+
+
+def remover_se_nao_processando(job_id: str) -> Job | None:
+    """Versao segura contra TOCTOU de remover(), para a rota publica
+    DELETE /api/jobs/{id}: a checagem de status e a remocao do registro
+    acontecem atomicamente sob o lock do JobStore (ver
+    JobStore.remover_se_nao_processando). Devolve o Job removido (apos apagar
+    seus arquivos em disco) ou None se nao encontrado ou 'processando'."""
+    job = _store.remover_se_nao_processando(job_id)
+    if job is not None:
+        _apagar_arquivo(job.caminho_pdf)
+        _apagar_arquivo(job.caminho_saida)
+    return job
 
 
 def limpar_finalizados() -> int:

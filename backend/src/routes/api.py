@@ -137,15 +137,18 @@ def baixar_job(job_id: str) -> FileResponse:
 
 @router.delete("/api/jobs/{job_id}")
 def remover_job(job_id: str) -> dict:
-    job = jobs.obter_store().obter(job_id)
-    if job is None:
+    # Checagem de status + remocao acontecem atomicamente dentro de
+    # remover_se_nao_processando() (ver JobStore) - evita o worker comecar a
+    # processar o job entre um check aqui e uma remocao separada depois.
+    if jobs.remover_se_nao_processando(job_id) is not None:
+        return {"removido": True}
+
+    atual = jobs.obter_store().obter(job_id)
+    if atual is None:
         raise HTTPException(status_code=404, detail="job nao encontrado")
-    if job.status == "processando":
-        raise HTTPException(
-            status_code=409, detail="job em processamento nao pode ser removido"
-        )
-    jobs.remover(job_id)
-    return {"removido": True}
+    raise HTTPException(
+        status_code=409, detail="job em processamento nao pode ser removido"
+    )
 
 
 @router.delete("/api/jobs")
