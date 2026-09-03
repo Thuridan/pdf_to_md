@@ -514,6 +514,23 @@ class TestEmpacotamento(unittest.TestCase):
             "pdf_to_md.__version__",
         )
 
+    def test_extra_dev_traz_o_necessario_para_rodar_backend_tests(self):
+        """BUG-16: dependencies.md recomendava `pip install ".[docling,dev]"`
+        para rodar backend/tests/, mas `dev` so trazia fpdf2 - sem fastapi
+        (backend/tests/test_app.py) nem httpx2 (exigido pelo proprio
+        starlette.testclient em tempo de import), a colecao dos testes
+        falhava antes mesmo de rodar um so caso."""
+        dev = self.pyproject["project"]["optional-dependencies"]["dev"]
+        self.assertTrue(any("fpdf2" in dep for dep in dev))
+        self.assertTrue(
+            any("pdf-to-md[web]" in dep or "fastapi" in dep for dep in dev),
+            f"extra 'dev' precisa trazer fastapi (para backend/tests/test_app.py), visto: {dev}",
+        )
+        self.assertTrue(
+            any("httpx2" in dep for dep in dev),
+            f"extra 'dev' precisa trazer httpx2 (exigido por starlette.testclient), visto: {dev}",
+        )
+
     def test_frontend_nao_tem_versao_fixa_no_html(self):
         html = (Path(__file__).resolve().parent / "frontend" / "index.html").read_text(
             encoding="utf-8"

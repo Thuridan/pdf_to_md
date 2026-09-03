@@ -22,21 +22,24 @@ precisa de todas elas:
 [project.optional-dependencies]
 simples = ["pypdfium2>=4,<6"]
 docling = ["docling[rapidocr]>=2.100,<3"]
-dev     = ["fpdf2>=2.7,<3"]
-web     = ["fastapi>=0.115,<1", "uvicorn[standard]>=0.30,<1", "python-multipart>=0.0.9,<1"]
+dev     = ["fpdf2>=2.7,<3", "pdf-to-md[web]", "httpx2>=2,<3"]
+web     = ["pdf-to-md[simples]", "fastapi>=0.115,<1", "uvicorn[standard]>=0.30,<1", "python-multipart>=0.0.9,<1"]
 ```
 
 | Extra | Quando instalar | O que traz |
 |---|---|---|
 | `simples` | só quer extração de texto nativo, sem IA/OCR | `pypdfium2` |
 | `docling` | quer o motor de alta fidelidade (padrão) | `docling[rapidocr]` — traz `torch`, `onnxruntime`, `transformers` e dezenas de dependências transitivas |
-| `dev` | vai rodar a suíte de testes | `fpdf2`, para gerar PDFs sintéticos nos testes (ver [`library.md`](library.md#fpdf2)) |
-| `web` | vai rodar a aplicação FastAPI | `fastapi`, `uvicorn[standard]`, `python-multipart` |
+| `dev` | vai rodar as duas suítes de teste | `fpdf2` (gera PDFs sintéticos, ver [`library.md`](library.md#fpdf2)), `pdf-to-md[web]` (`backend/tests/` importa `fastapi.testclient`) e `httpx2` (exigido pelo `starlette.testclient` em tempo de import — sem ele, só importar `backend/tests/test_app.py` já falha) |
+| `web` | vai rodar a aplicação FastAPI | `pdf-to-md[simples]`, `fastapi`, `uvicorn[standard]`, `python-multipart` |
 
 Combinações típicas: `pip install ".[docling]"` (CLI completa),
 `pip install ".[docling,web]"` (app web com motor de alta fidelidade),
-`pip install ".[docling,dev]"` (para rodar `test_pdf_to_md.py` e
-`backend/tests/`).
+`pip install ".[dev]"` já é suficiente para rodar `test_pdf_to_md.py` e
+`backend/tests/` (o motor `simples` cobre as duas); `pip install
+".[docling,dev]"` roda as mesmas duas suítes com o motor pesado também
+disponível (`backend/tests/` continua forçando `engine="simples"` de
+propósito — ver [`architecture.md`](architecture.md#testes-como-parte-da-arquitetura)).
 
 Instalação alternativa sem clonar o `pyproject.toml` (ex.: em outro
 projeto que só quer importar o módulo): `pip install "docling[rapidocr]"` e/ou

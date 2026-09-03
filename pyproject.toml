@@ -30,8 +30,16 @@ simples = ["pypdfium2>=4,<6"]
 # Faixa de versao testada nesta maquina; docling evolui rapido, por isso um
 # teto de major version em vez de fixar um unico patch.
 docling = ["docling[rapidocr]>=2.100,<3"]
-# Dependencias so para rodar a suite de testes (gera PDFs sinteticos).
-dev = ["fpdf2>=2.7,<3"]
+# Dependencias para rodar as DUAS suites de teste: fpdf2 gera PDFs
+# sinteticos (test_pdf_to_md.py e backend/tests/test_jobs.py); backend/tests/
+# tambem importa fastapi.testclient, entao `web` (que ja traz `simples`
+# junto) precisa vir com o extra - sem isso, "pip install .[dev]" nao e
+# suficiente para rodar backend/tests/ apesar do que dependencies.md promete.
+# httpx2 nao aparece em nenhum import do projeto: e exigido pelo proprio
+# starlette.testclient (>=1.x) em tempo de import, so para quem usa
+# TestClient - sem ele, so importar backend/tests/test_app.py ja falha com
+# RuntimeError, mesmo com fastapi/uvicorn instalados.
+dev = ["fpdf2>=2.7,<3", "pdf-to-md[web]", "httpx2>=2,<3"]
 # Aplicacao web: API FastAPI por cima do pdf_to_md.py existente.
 # `pdf-to-md[simples]` garante que a aplicacao tenha ao menos um motor
 # funcional mesmo sem o extra `docling` (pesado, opt-in).

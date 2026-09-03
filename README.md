@@ -65,7 +65,7 @@ Forma recomendada, via `pyproject.toml` (também instala o comando `pdf-to-md`):
 ```bash
 pip install ".[docling]"   # motor de alta fidelidade (Docling + RapidOCR)
 pip install ".[simples]"   # so o motor leve (pypdfium2)
-pip install ".[dev]"       # dependencias da suite de testes (fpdf2)
+pip install ".[dev]"       # dependencias das duas suites de teste (fpdf2, web, httpx2)
 pip install ".[web]"       # FastAPI + uvicorn, para a aplicação web (ver seção abaixo)
 ```
 
