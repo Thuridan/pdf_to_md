@@ -28,9 +28,17 @@ projeto:
   coerente com o resto do repositório, que já evita dependências
   desnecessárias (ver [`dependencies.md`](dependencies.md)).
 
-O único recurso externo é uma folha de estilo do Google Fonts (Sora, Work
-Sans, IBM Plex Mono) carregada via `<link>` no `<head>` — sem hospedar fontes
-localmente, mas também sem JS de terceiros.
+Zero recursos externos: as três fontes (Sora, Work Sans, IBM Plex Mono) são
+`.woff2` hospedadas em `frontend/fontes/`, com `@font-face` em `app.css` —
+não um `<link>` para `fonts.googleapis.com`. Um `<link rel="stylesheet">`
+cross-origin bloqueia a primeira pintura da página até estourar o timeout de
+DNS/TCP quando a rede não tem saída para a internet, exatamente a superfície
+(rede local/offline) que o resto do projeto já cobre no motor via
+`--offline`. Sora e Work Sans são fontes variáveis — um único arquivo cobre
+todos os pesos usados (600/700 e 400/500/600, respectivamente); só o
+subconjunto `latin` foi baixado, suficiente para o pt-BR (`ã`/`ç`/`õ` já
+estão dentro de U+0000-00FF). Licenças (SIL OFL 1.1) em
+`frontend/fontes/OFL.txt`.
 
 ## `index.html` — estrutura semântica
 

@@ -145,5 +145,8 @@ ferramenta local/single-tenant, não um serviço redistribuível via wheel.
 
 Nenhuma. `frontend/` não tem `package.json` — ver
 [`frontend.md`](frontend.md#decisão-fundamental-sem-build-step) para o
-raciocínio completo. O único recurso externo é a folha de estilo de fontes
-do Google Fonts, carregada por `<link>` no HTML (sem SDK/JS de terceiros).
+raciocínio completo. Zero recursos externos: as fontes (antes carregadas via
+`<link>` para `fonts.googleapis.com`) são `.woff2` hospedadas em
+`frontend/fontes/` desde que isso passou a bloquear a primeira pintura da
+página em redes sem saída para a internet — ver
+[`frontend.md`](frontend.md#decisão-fundamental-sem-build-step).

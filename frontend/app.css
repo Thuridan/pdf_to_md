@@ -1,3 +1,41 @@
+/* Hospedadas localmente (fontes/) em vez de um <link> externo pro CDN de
+   fontes do Google: nessa rede local/offline (a mesma que --offline existe
+   pra cobrir no motor), um <link rel="stylesheet"> cross-origin bloqueia a
+   primeira pintura da pagina ate estourar o timeout de DNS/TCP. Sora e Work
+   Sans sao fontes variaveis - o mesmo arquivo cobre os pesos 600/700 e
+   400/500/600 respectivamente (confirmado no CSS que o provedor original
+   servia: pesos diferentes da mesma familia apontavam pro mesmo .woff2).
+   Subset "latin" (U+0000-00FF e pontuacao comum) e suficiente pro pt-BR:
+   acentos como ã/ç/õ ja estao dentro de U+0000-00FF. */
+@font-face {
+  font-family: "Sora";
+  font-style: normal;
+  font-weight: 600 700;
+  font-display: swap;
+  src: url("fontes/sora-variable.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Work Sans";
+  font-style: normal;
+  font-weight: 400 600;
+  font-display: swap;
+  src: url("fontes/work-sans-variable.woff2") format("woff2");
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("fontes/ibm-plex-mono-400.woff2") format("woff2");
+}
+@font-face {
+  font-family: "IBM Plex Mono";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("fontes/ibm-plex-mono-500.woff2") format("woff2");
+}
+
 :root {
   --bg: oklch(98% 0.004 250);
   --surface: oklch(100% 0 0);

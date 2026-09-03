@@ -551,6 +551,30 @@ class TestEmpacotamento(unittest.TestCase):
         css = (raiz / "app.css").read_text(encoding="utf-8")
         self.assertIn('.botao-baixar-tudo[aria-disabled="true"]', css)
 
+    def test_frontend_nao_tem_link_externo_para_google_fonts(self):
+        """BUG-19: um <link rel="stylesheet"> cross-origin para
+        fonts.googleapis.com bloqueia a primeira pintura da pagina ate
+        estourar o timeout de DNS/TCP numa rede sem saida para a internet -
+        justo a superficie (--offline, rede local) que o resto do projeto ja
+        cobre no motor. As fontes agora sao .woff2 locais em frontend/fontes/."""
+        raiz = Path(__file__).resolve().parent / "frontend"
+        html = (raiz / "index.html").read_text(encoding="utf-8")
+        self.assertNotIn("fonts.googleapis.com", html)
+        self.assertNotIn("fonts.gstatic.com", html)
+
+        css = (raiz / "app.css").read_text(encoding="utf-8")
+        self.assertNotIn("fonts.googleapis.com", css)
+        self.assertNotIn("fonts.gstatic.com", css)
+        self.assertIn("@font-face", css)
+
+        for nome in (
+            "sora-variable.woff2",
+            "work-sans-variable.woff2",
+            "ibm-plex-mono-400.woff2",
+            "ibm-plex-mono-500.woff2",
+        ):
+            self.assertTrue((raiz / "fontes" / nome).is_file(), f"faltando frontend/fontes/{nome}")
+
     def test_frontend_nao_afirma_gpu_ou_docling_incondicionalmente(self):
         """BUG-17: badge/resumo/rodape do frontend diziam "Aguardando GPU" e
         "motor Docling" incondicionalmente, mesmo quando o motor real e
