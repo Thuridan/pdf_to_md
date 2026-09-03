@@ -27,6 +27,28 @@ MAX_UPLOAD_ARQUIVOS = int(os.getenv("MAX_UPLOAD_FILES", "50"))
 _TAMANHO_BLOCO = 1024 * 1024
 
 
+def _nome_saida_seguro(nome_original: str, job_id: str) -> str:
+    """Deriva um nome de arquivo de saida seguro a partir de nome_original
+    (vindo do cliente, nunca sanitizado antes). `Path(...).name` ja neutraliza
+    travessia POSIX (`../../etc/passwd.pdf` -> `passwd.md`), mas o servidor
+    roda em Linux e pathlib nao trata `\\` como separador - um cliente
+    Windows pode enviar `..\\..\\evil.pdf`, que passaria intacto para o
+    arcname do zip / Content-Disposition e escaparia do diretorio de extracao
+    em extratores que tratam `\\` como separador (zip-slip).
+
+    Nao usa Path.with_suffix(): em nomes so-de-pontos ou vazios apos a
+    normalizacao (`Path("").with_suffix(...)`, `Path(".").with_suffix(...)`)
+    ele levanta ValueError, o que derrubaria a rota com 500 em vez de cair
+    no fallback `{job_id[:8]}.md" abaixo - a troca de extensao e feita via
+    string, sem tocar em with_suffix.
+    """
+    base = Path(nome_original.replace("\\", "/")).name
+    if "." in base:
+        base = base.rsplit(".", 1)[0]
+    nome = f"{base}.md".lstrip(".").strip()
+    return nome or f"{job_id[:8]}.md"
+
+
 async def _ler_com_teto(arquivo: UploadFile, teto: int) -> bytes | None:
     """Le em blocos (nunca `arquivo.read()` de uma vez) e desiste assim que o
     teto e ultrapassado, sem acumular o restante do arquivo em memoria."""
@@ -109,7 +131,7 @@ def baixar_job(job_id: str) -> FileResponse:
             status_code=409,
             detail=f"job ainda nao concluido (status atual: {job.status})",
         )
-    nome_saida = Path(job.nome_original).with_suffix(".md").name
+    nome_saida = _nome_saida_seguro(job.nome_original, job.id)
     return FileResponse(job.caminho_saida, media_type="text/markdown", filename=nome_saida)
 
 
@@ -147,7 +169,7 @@ def baixar_zip(ids: str | None = None) -> StreamingResponse:
     usados: set[str] = set()
     with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
         for job in concluidos:
-            nome = Path(job.nome_original).with_suffix(".md").name
+            nome = _nome_saida_seguro(job.nome_original, job.id)
             if nome in usados:
                 nome = f"{job.id[:8]}-{nome}"
             usados.add(nome)

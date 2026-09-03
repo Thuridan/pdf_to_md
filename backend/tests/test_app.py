@@ -205,6 +205,45 @@ class TestLimitesDeUpload(unittest.TestCase):
         self.assertEqual(corpo["rejeitados"][0]["nome_original"], "c.pdf")
 
 
+class TestNomeSaidaSeguro(unittest.TestCase):
+    """BUG-05: zip-slip via separador do Windows no nome_original do cliente.
+    `Path(nome).with_suffix(".md").name` neutraliza travessia POSIX, mas o
+    servidor roda em Linux e pathlib nao trata `\\` como separador - um
+    cliente Windows podia mandar `..\\..\\evil.pdf` intacto para o arcname
+    do zip / Content-Disposition."""
+
+    CASOS_MALICIOSOS = [
+        "..\\..\\..\\Windows\\System32\\evil.pdf",
+        "../../etc/passwd.pdf",
+        "/etc/x.pdf",
+        "...pdf",
+        "",
+        ".",
+        "..",
+        "\\",
+    ]
+
+    def test_nunca_contem_separador_ou_travessia_e_nunca_e_vazio(self):
+        for nome_original in self.CASOS_MALICIOSOS:
+            with self.subTest(nome_original=nome_original):
+                nome = api._nome_saida_seguro(nome_original, "abcd1234efgh0000")
+                self.assertNotIn("/", nome)
+                self.assertNotIn("\\", nome)
+                self.assertNotIn("..", nome)
+                self.assertTrue(nome)
+
+    def test_nomes_normais_preservam_o_nome_base(self):
+        self.assertEqual(api._nome_saida_seguro("relatorio.pdf", "x"), "relatorio.md")
+        self.assertEqual(api._nome_saida_seguro("arquivo.tar.pdf", "x"), "arquivo.tar.md")
+
+    def test_nao_levanta_excecao_para_nome_so_de_pontos_ou_vazio(self):
+        # Path("").with_suffix(".md") / Path(".").with_suffix(".md") levantam
+        # ValueError sem essa protecao - a rota devolveria 500.
+        for nome_original in ("", ".", ".."):
+            with self.subTest(nome_original=nome_original):
+                api._nome_saida_seguro(nome_original, "job-id")  # nao deve levantar
+
+
 class TestDownloadEndpoints(unittest.TestCase):
     """Insere jobs 'concluidos' direto no store (sem passar pelo worker/motor
     real) - Step 6 e sobre servir o que ja foi processado, nao sobre processar."""
@@ -285,6 +324,22 @@ class TestDownloadEndpoints(unittest.TestCase):
         zf = zipfile.ZipFile(io.BytesIO(resposta.content))
         self.assertEqual(len(zf.namelist()), 2)
         self.assertEqual(len(set(zf.namelist())), 2)
+
+    def test_zip_nao_contem_entrada_com_separador_windows_no_arcname(self):
+        self._job_concluido("j1", "..\\..\\..\\Windows\\System32\\evil.pdf", "conteudo")
+        with TestClient(app) as cliente:
+            resposta = cliente.get("/api/download-zip")
+        zf = zipfile.ZipFile(io.BytesIO(resposta.content))
+        self.assertEqual(zf.namelist(), ["evil.md"])
+
+    def test_download_de_job_com_nome_windows_nao_leva_separador_ao_content_disposition(self):
+        job = self._job_concluido("j1", "..\\..\\evil.pdf", "conteudo")
+        with TestClient(app) as cliente:
+            resposta = cliente.get(f"/api/jobs/{job.id}/download")
+        self.assertEqual(resposta.status_code, 200)
+        disposition = resposta.headers.get("content-disposition", "")
+        self.assertNotIn("\\", disposition)
+        self.assertIn("evil.md", disposition)
 
 
 class TestRemoverJobsEndpoints(unittest.TestCase):
