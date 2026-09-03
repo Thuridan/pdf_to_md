@@ -25,17 +25,17 @@
 
 | ID | Prioridade | Estado | Executado | Commit | Testes adicionados |
 |---|---|---|---|---|---|
-| TAREFA-1 | máxima (decide o resto da rodada) | **HIPÓTESE REFUTADA** (para os dois exemplos que a motivaram) | sim — medição + registro | `9a07ee3` | 0 (nenhuma mudança de código) |
-| TAREFA-2 | condicional à TAREFA-1 | **NÃO EXECUTADA** — condição de parada do próprio prompt foi atingida | — | — | — |
+| TAREFA-1 | máxima (decide o resto da rodada) | ~~HIPÓTESE REFUTADA~~ → **HIPÓTESE CONFIRMADA, causa era um parâmetro de exportação não usado** (corrigido na rodada 5, TAREFA-6 — ver errata no detalhe) | sim — medição + registro | `9a07ee3` | 0 (nenhuma mudança de código) |
+| TAREFA-2 | condicional à TAREFA-1 | **NÃO EXECUTADA** — decisão de parar continua correta, mas agora por custo de RSS, não por falta de benefício (ver errata) | — | — | — |
 | TAREFA-3 | condicional à TAREFA-1 | **NÃO EXECUTADA** — mesma razão | — | — | — |
 | TAREFA-4 | — | REGISTRADA, não implementada (por instrução explícita) | sim — só registro | `9a07ee3` | 0 |
 
 **Contagens:**
-- Hipótese testada e refutada (para o caso motivador): 1 (TAREFA-1)
-- Não executadas por condição de parada explícita do prompt: 2 (TAREFA-2, TAREFA-3)
+- Hipótese testada, inicialmente classificada como refutada, **corrigida para confirmada** na rodada 5 (TAREFA-6): 1 (TAREFA-1)
+- Não executadas por condição de parada — decisão preservada, razão corrigida: 2 (TAREFA-2, TAREFA-3)
 - Registradas sem implementação (por instrução): 1 (TAREFA-4)
 - Total de testes adicionados: **0** — rodada não alterou nenhum comportamento de código, só documentação (`README.md`, `docs/backend.md`)
-- Critério de conclusão da rodada (`prompt-rodada-4.md`): *"Se o OCR não recuperar o texto das capturas, pare, registre isso como achado, e não faça as TAREFAS 2 e 3"* — **atendido exatamente como escrito.**
+- Critério de conclusão da rodada (`prompt-rodada-4.md`): *"Se o OCR não recuperar o texto das capturas, pare, registre isso como achado, e não faça as TAREFAS 2 e 3"* — o achado original ("não recuperar") era um artefato de medição (ver errata); mesmo assim, a decisão de parar se sustenta hoje pelo custo de RSS medido, não pela ausência de benefício.
 
 ---
 
@@ -43,7 +43,47 @@
 
 ### TAREFA-1 — Medir o custo real do OCR em documento nativo com imagens
 
-- **Estado:** hipótese do prompt (OCR recupera o conteúdo das duas capturas citadas) **refutada pela medição**, com uma ressalva importante — ver "Leitura" abaixo.
+> **Errata (rodada 5, TAREFA-6):** o estado abaixo — "refutada pela
+> medição" — estava **errado**, por uma causa mais específica do que o
+> `prompt-rodada-5.md` antecipava. Não é "hipótese parcialmente
+> confirmada" (OCR funciona em capturas simples, falha nas densas): a
+> rodada 5 (TAREFA-5) descobriu que o OCR recuperou **os cinco termos-alvo
+> nas duas páginas**, sempre — o texto reconhecido ficava pendurado como
+> filhos do `PictureItem` na árvore do `DoclingDocument`, e nunca era
+> exportado porque `export_to_markdown()` não recebia
+> `traverse_pictures=True` (parâmetro documentado pelo próprio Docling
+> para exatamente esse caso — "scanned/image-based PDFs processed with
+> full-page OCR" — nunca passado pelo projeto). Reexportar o **mesmo**
+> `ConversionResult` já convertido, só com esse parâmetro, recupera tudo:
+> `scp_admin`, `password-complexity`, `update-server`, `Max Rows in CSV
+> Export`, `corp-syslog`. Ver `docs/backend.md` (rodada 5, TAREFA-5) para a
+> medição completa.
+>
+> **Divergência registrada em relação ao texto sugerido pelo
+> `prompt-rodada-5.md`** para esta correção ("hipótese parcialmente
+> confirmada... razão da parada: custo de memória proibitivo"): a medição
+> real não sustenta "parcialmente" — os dois exemplos que motivaram a
+> rodada foram **totalmente** recuperados, não parcialmente. A causa real
+> também não é "RapidOCR não lida bem com texto denso" (a leitura original
+> abaixo) — é um parâmetro de exportação nunca usado. O texto original da
+> medição (tempo, RSS, timings, diff de conteúdo) é preservado abaixo sem
+> edição, porque a medição em si está correta; só a **interpretação** do
+> resultado ("não recuperado") e a causa apontada ("RapidOCR falha em
+> texto denso") estavam erradas — a causa verdadeira só foi encontrada
+> investigando por que variar idioma/escala não mudava nada (rodada 5,
+> TAREFA-5).
+>
+> **O que continua de pé, e sustenta a decisão de não ter feito TAREFA-2/3
+> desta rodada mesmo agora:** o custo de RSS medido abaixo (2,37×, 44,3 GB
+> numa faixa de 46 páginas) é do OCR em si, independente de
+> `traverse_pictures` — ligar OCR mais amplamente continuaria caro. Então
+> a decisão de **parar** a rodada 4 depois da TAREFA-1 acaba correta na
+> prática, mas pela razão de custo, não pela razão de benefício citada
+> originalmente. Essa é exatamente a razão que o `prompt-rodada-5.md`
+> pediu para promover a primeiro plano — nisso, o prompt está certo, só
+> não no grau "parcial" da confirmação.
+
+- **Estado (texto original, agora incorreto — ver errata acima):** hipótese do prompt (OCR recupera o conteúdo das duas capturas citadas) **refutada pela medição**, com uma ressalva importante — ver "Leitura" abaixo.
 - **Método:** faixa real de 46 páginas (50–95, índices 49–94) extraída de `teste.pdf` via `pypdfium2.PdfDocument.import_pages()` — inclui as duas capturas citadas no prompt (página 61: XML diff de Config Audit; página 91: tela de Logging and Reporting Settings). Script de medição (`medir_ocr.py`, scratchpad da sessão) converteu a faixa duas vezes — `ocr=False` e `ocr=True` — com `settings.debug.profile_pipeline_timings = True` ligado, e `/usr/bin/time -v` em volta de cada execução para o pico de RSS real do processo.
 - **Dados coletados:**
 
