@@ -9,6 +9,11 @@ description = "Conversor de PDF para Markdown (Docling ou pypdfium2)."
 requires-python = ">=3.10"
 readme = "README.md"
 license = "MIT"
+# pypdfium2 e o motor minimo obrigatorio: sem ele, a aplicacao (CLI ou web) nao
+# tem NENHUM motor disponivel se o extra `docling` nao for instalado, e falha
+# no startup (selecionar_motor levanta ErroConversao). !=4.30.1 replica a
+# exclusao que o proprio docling-slim faz nessa versao especifica.
+dependencies = ["pypdfium2>=4.30.0,!=4.30.1,<6"]
 
 [project.optional-dependencies]
 # Motor leve: so extrai a camada de texto nativa do PDF (sem OCR/tabelas).
@@ -20,7 +25,14 @@ docling = ["docling[rapidocr]>=2.100,<3"]
 # Dependencias so para rodar a suite de testes (gera PDFs sinteticos).
 dev = ["fpdf2>=2.7,<3"]
 # Aplicacao web (v3.0): API FastAPI por cima do pdf_to_md.py existente.
-web = ["fastapi>=0.115,<1", "uvicorn[standard]>=0.30,<1", "python-multipart>=0.0.9,<1"]
+# `pdf-to-md[simples]` garante que a aplicacao tenha ao menos um motor
+# funcional mesmo sem o extra `docling` (pesado, opt-in).
+web = [
+    "pdf-to-md[simples]",
+    "fastapi>=0.115,<1",
+    "uvicorn[standard]>=0.30,<1",
+    "python-multipart>=0.0.9,<1",
+]
 
 [project.scripts]
 pdf-to-md = "pdf_to_md:main"

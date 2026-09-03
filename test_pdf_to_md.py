@@ -467,6 +467,38 @@ class TestAmbiente(unittest.TestCase):
         self.assertEqual(os.environ["HF_HUB_OFFLINE"], "1")
 
 
+try:
+    import tomllib
+except ImportError:  # Python 3.10 nao tem tomllib na stdlib.
+    tomllib = None
+
+
+@unittest.skipUnless(tomllib is not None, "requer tomllib (Python 3.11+)")
+class TestEmpacotamento(unittest.TestCase):
+    """BUG-02: sem NENHUM motor instalado, a aplicacao (CLI ou web) nao sobe
+    (selecionar_motor levanta ErroConversao). pypdfium2 precisa ser dependencia
+    obrigatoria, nao so um extra, e o extra `web` precisa garantir um motor."""
+
+    @classmethod
+    def setUpClass(cls):
+        caminho = Path(__file__).resolve().parent / "pyproject.toml"
+        cls.pyproject = tomllib.loads(caminho.read_text(encoding="utf-8"))
+
+    def test_pypdfium2_e_dependencia_obrigatoria(self):
+        obrigatorias = self.pyproject["project"]["dependencies"]
+        self.assertTrue(
+            any("pypdfium2" in dep for dep in obrigatorias),
+            f"pypdfium2 deveria estar em [project.dependencies], visto: {obrigatorias}",
+        )
+
+    def test_extra_web_garante_um_motor_disponivel(self):
+        web = self.pyproject["project"]["optional-dependencies"]["web"]
+        self.assertTrue(
+            any("pdf-to-md[simples]" in dep or "pypdfium2" in dep for dep in web),
+            f"extra 'web' deveria trazer o motor 'simples' de brinde, visto: {web}",
+        )
+
+
 # ---------------------------------------------------------------------------
 # 7. CLI ponta a ponta (motor real pypdfium2)
 # ---------------------------------------------------------------------------
