@@ -237,9 +237,27 @@ function renderizarFila() {
   }
   clearDoneBtn.disabled = contagens.concluido + contagens.erro === 0;
 
+  // jobsList.innerHTML = ... recria a lista inteira a cada poll (1.5s), o que
+  // destroi qualquer elemento focado dentro dela - quem navega ate um botao
+  // de remover perde o foco no proximo ciclo, indefinidamente. Guarda o
+  // data-job-id de quem estava focado e restaura o foco no botao equivalente
+  // apos o re-render (o job pode ter mudado de posicao/estado na lista).
+  const focoAtual = document.activeElement;
+  const jobIdComFoco =
+    focoAtual instanceof HTMLElement && jobsList.contains(focoAtual)
+      ? focoAtual.dataset.jobId
+      : null;
+
   jobsList.innerHTML = jobsCache.length
     ? jobsCache.map((j) => linhaJob(j, contagens.na_fila)).join("")
     : '<div class="fila-vazia">Nenhum PDF na fila ainda.</div>';
+
+  if (jobIdComFoco) {
+    const botaoEquivalente = jobsList.querySelector(
+      `[data-job-id="${jobIdComFoco}"]`
+    );
+    botaoEquivalente?.focus();
+  }
 }
 
 // Numero de sequencia: setInterval nao espera o poll anterior terminar, e
