@@ -10,7 +10,7 @@ import tempfile
 import zipfile
 from pathlib import Path
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, StreamingResponse
 
 import pdf_to_md
@@ -101,12 +101,23 @@ def motor() -> dict:
 
 
 @router.post("/api/jobs")
-async def criar_jobs(files: list[UploadFile] = File(...)) -> dict:
+async def criar_jobs(
+    files: list[UploadFile] = File(...),
+    modo_ocr: str = Form("automatico"),
+) -> dict:
     """Cria um job por PDF valido e enfileira para o worker processar.
 
     A resposta volta assim que os arquivos sao gravados em disco - o
     processamento em si roda em background na thread worker unica.
+
+    modo_ocr (TAREFA-3, rodada 3): "automatico" (detecta camada de texto
+    por arquivo), "sempre" ou "nunca" (forca, ignorando a deteccao) -
+    aplicado ao LOTE inteiro deste upload. Um valor desconhecido cai pro
+    padrao "automatico" em vez de rejeitar a requisicao - client antigo
+    que nao manda o campo continua funcionando como antes.
     """
+    if modo_ocr not in jobs.MODOS_OCR:
+        modo_ocr = "automatico"
     criados = []
     rejeitados = []
     for arquivo in files:
@@ -127,7 +138,7 @@ async def criar_jobs(files: list[UploadFile] = File(...)) -> dict:
                 "motivo": f"excede o limite de {MAX_UPLOAD_BYTES} bytes",
             })
             continue
-        job = jobs.criar_job(nome, caminho_pdf)
+        job = jobs.criar_job(nome, caminho_pdf, modo_ocr=modo_ocr)
         jobs.enfileirar(job.id)
         criados.append(job.to_dict())
     return {"criados": criados, "rejeitados": rejeitados}

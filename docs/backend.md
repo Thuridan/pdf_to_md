@@ -67,7 +67,7 @@ Duas decisões relevantes aqui:
 |---|---|---|---|
 | `GET` | `/api/health` | Liveness check + versão do pacote. | `200` |
 | `GET` | `/api/motor` | Qual motor está ativo neste processo (`docling`/`simples`). | `200` |
-| `POST` | `/api/jobs` | Upload de um ou mais PDFs (`multipart/form-data`, campo `files`); enfileira cada um válido. | `200` (sempre — rejeições vêm no corpo) |
+| `POST` | `/api/jobs` | Upload de um ou mais PDFs (`multipart/form-data`, campo `files`, mais `modo_ocr` opcional); enfileira cada um válido. | `200` (sempre — rejeições vêm no corpo) |
 | `GET` | `/api/jobs` | Lista todos os jobs com status/progresso estimado. | `200` |
 | `GET` | `/api/jobs/{id}` | Status de um job específico. | `200` / `404` |
 | `DELETE` | `/api/jobs/{id}` | Remove um job e seus arquivos em disco. | `200` / `404` / `409` (processando) |
@@ -78,7 +78,10 @@ Duas decisões relevantes aqui:
 ### `POST /api/jobs` — contrato de upload
 
 ```python
-async def criar_jobs(files: list[UploadFile] = File(...)) -> dict:
+async def criar_jobs(
+    files: list[UploadFile] = File(...),
+    modo_ocr: str = Form("automatico"),
+) -> dict:
     ...
     return {"criados": [...], "rejeitados": [...]}
 ```
@@ -86,9 +89,49 @@ async def criar_jobs(files: list[UploadFile] = File(...)) -> dict:
 Cada arquivo é classificado por extensão (`pdf_to_md.SUFIXOS_PDF`), não por
 `Content-Type` — um upload malformado ou renomeado é pego pela extensão, não
 confiando no header enviado pelo cliente. Arquivos não-PDF vão para
-`rejeitados` com o motivo; o restante é gravado em disco e enfileirado. A
-resposta é sempre `200`: a rota nunca falha por causa de um arquivo ruim no
-meio de um lote misto (ver `test_lote_misto_separa_criados_de_rejeitados`).
+`rejeitados` com o motivo; o restante é gravado em disco (em blocos, direto
+do `UploadFile` — ver `_gravar_upload_com_teto`) e enfileirado. A resposta é
+sempre `200`: a rota nunca falha por causa de um arquivo ruim no meio de um
+lote misto (ver `test_lote_misto_separa_criados_de_rejeitados`). Cada
+arquivo do `criados` já vem com `estimativa_segundos`/
+`estimativa_baixa_confianca` (rodada 3, `Job.to_dict()`) e `ocr`/
+`ocr_origem` (ver abaixo).
+
+### OCR automático por documento (rodada 3, TAREFA-3)
+
+`modo_ocr` ("automatico"/"sempre"/"nunca", padrão "automatico" — um valor
+desconhecido também cai para "automatico" em vez de rejeitar a requisição)
+se aplica ao lote inteiro do upload. Em "automatico", `jobs._decidir_ocr()`
+chama `pdf_to_md.tem_camada_de_texto(caminho_pdf)` por arquivo; a decisão
+efetiva (`Job.ocr`) e sua origem (`Job.ocr_origem`: `"detectado"` ou
+`"forcado"`) ficam gravadas no `Job` na criação — auditável depois, quando o
+resultado sai pior que o esperado. Na dúvida (PDF ilegível pelo pypdfium2),
+o padrão é rodar OCR: um falso negativo (OCR num PDF nativo) só desperdiça
+tempo, um falso positivo (pular OCR num digitalizado) perde conteúdo.
+
+Detecção em `tem_camada_de_texto()`: amostra até 12 páginas distribuídas ao
+longo do documento (não as primeiras — capa/sumário não representam o
+miolo) e decide pela *proporção* de páginas amostradas com conteúdo
+substantivo (≥ 40 caracteres), não por "qualquer página com texto" — isso
+tolera páginas legitimamente sem texto num nativo (diagramas, separadores)
+sem empurrar a decisão para "digitalizado". Limiar de maioria (≥ 50%)
+calibrado contra dois documentos reais (não sintéticos): um manual nativo
+de 1310 páginas com texto rico em toda página amostrada, e um documento
+digitalizado real de 26 páginas com zero texto extraível em todas elas. Não
+havia um terceiro documento misto orgânico disponível para calibração — o
+caso misto foi validado combinando páginas reais dos dois anteriores
+(60% nativo + apêndice digitalizado real: detectado como nativo, OCR
+desligado para o documento inteiro — o modo de falha conhecido documentado
+no `README.md`).
+
+**Limitação até a TAREFA-4:** `MotorDocling` cacheia UM `DocumentConverter`
+por processo, com `do_ocr` fixado nas opções do PRIMEIRO job processado
+(ver `_obter_converter`) — `_processar()` já monta um `Config` por job via
+`dataclasses.replace(cfg, ocr=job.ocr)`, mas até o motor Docling ganhar um
+converter por modo de OCR (TAREFA-4), essa configuração por job só tem
+efeito completo no motor `simples` (que não faz OCR de qualquer jeito). Um
+processo que processa um job com OCR e depois outro sem (ou vice-versa) via
+Docling mantém o `do_ocr` do primeiro para os dois, silenciosamente.
 
 ### Convenção de erros
 

@@ -455,6 +455,76 @@ def contar_paginas(pdf: Path) -> int | None:
         raise PdfIlegivel(f"pypdfium2 nao conseguiu abrir o PDF: {exc}") from exc
 
 
+# Parametros de amostragem calibrados contra dois documentos reais (ver
+# relatorio da rodada 3, TAREFA-3): um manual nativo grande (1310 paginas,
+# texto rico em toda pagina amostrada) e um documento digitalizado real
+# (26 paginas, zero texto extraivel em TODAS as paginas). Nao houve um
+# terceiro documento misto organico disponivel - o caso misto foi montado
+# combinando paginas reais dos dois anteriores (ver relatorio).
+_OCR_AMOSTRAS_PADRAO = 12
+_OCR_MIN_CHARS_PAGINA = 40
+# Regra de maioria (>=50%), nao "qualquer pagina com texto": os dois erros
+# possiveis nao custam o mesmo. Falso negativo (roda OCR num PDF nativo)
+# so desperdica tempo - a saida sai correta. Falso positivo (pula OCR num
+# PDF digitalizado) produz saida vazia/incompleta, silenciosamente. Por
+# isso o limiar e conservador a favor de RODAR OCR quando incerto, em vez
+# de otimizar para evitar OCR desnecessario.
+_OCR_PROPORCAO_MINIMA = 0.5
+
+
+def tem_camada_de_texto(
+    pdf: Path,
+    *,
+    amostras: int = _OCR_AMOSTRAS_PADRAO,
+    min_chars_pagina: int = _OCR_MIN_CHARS_PAGINA,
+    proporcao_minima: float = _OCR_PROPORCAO_MINIMA,
+) -> bool:
+    """Decide, sem OCR nem modelos pesados, se o PDF ja tem uma camada de
+    texto nativa (documento gerado por editor) ou precisa de OCR
+    (digitalizado/escaneado).
+
+    Amostra ate `amostras` paginas DISTRIBUIDAS ao longo do documento (nao
+    as primeiras N - capa e sumario nao representam o miolo do documento) e
+    decide pela PROPORCAO de paginas amostradas que trouxeram conteudo
+    substantivo (>= min_chars_pagina caracteres apos strip), nao por
+    "qualquer pagina com texto". Isso tolera paginas legitimamente sem
+    texto num documento nativo (diagramas, folhas de separacao) sem
+    empurrar a decisao para "digitalizado" - só uma MAIORIA de paginas sem
+    texto (proporcao abaixo de `proporcao_minima`) faz isso.
+
+    Levanta PdfIlegivel nas mesmas condicoes que contar_paginas().
+    """
+    import pypdfium2 as pdfium
+
+    try:
+        doc = pdfium.PdfDocument(str(pdf))
+    except Exception as exc:
+        raise PdfIlegivel(f"pypdfium2 nao conseguiu abrir o PDF: {exc}") from exc
+
+    try:
+        total = len(doc)
+        if total == 0:
+            return False
+        n = min(amostras, total)
+        # indices distribuidos uniformemente de 0 a total-1 (inclusive nas
+        # duas pontas quando n>1); set() descarta duplicatas em documentos
+        # curtos (n proximo de total).
+        if n == 1:
+            indices = [total // 2]
+        else:
+            indices = sorted({round(i * (total - 1) / (n - 1)) for i in range(n)})
+
+        com_texto = 0
+        for i in indices:
+            texto = doc[i].get_textpage().get_text_range()
+            if len(texto.strip()) >= min_chars_pagina:
+                com_texto += 1
+
+        return (com_texto / len(indices)) >= proporcao_minima
+    finally:
+        doc.close()
+
+
 def escrever_atomico(destino: Path, conteudo: str) -> None:
     """Grava via arquivo temporario + rename, evitando .md truncado se falhar."""
     destino.parent.mkdir(parents=True, exist_ok=True)

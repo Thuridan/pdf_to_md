@@ -174,6 +174,31 @@ Principais rotas (ver `backend/src/routes/api.py`):
 | `DELETE /api/jobs` | Remove todos os jobs concluídos/com erro (e seus arquivos) — "Limpar finalizados". |
 | `GET /api/download-zip` | Zip com os `.md` de todos os jobs concluídos (ou de `?ids=`). |
 
+### OCR automático por documento
+
+Rodar OCR página a página num PDF nativo de 2000 páginas é trabalho jogado
+fora; pular OCR num documento digitalizado perde o conteúdo inteiro. A
+aplicação web decide por arquivo, via `pdf_to_md.tem_camada_de_texto()`:
+amostra até 12 páginas distribuídas ao longo do documento (não as primeiras
+— capa e sumário não representam o miolo) e considera "tem camada de
+texto" se pelo menos metade das páginas amostradas trouxer conteúdo
+substantivo (≥ 40 caracteres). O limiar de maioria é deliberadamente
+conservador a favor de **rodar** OCR quando incerto: um falso negativo
+(OCR num PDF nativo) só desperdiça tempo, um falso positivo (pular OCR num
+digitalizado) perde conteúdo silenciosamente.
+
+Um seletor de três estados no upload (`automático` / `sempre` / `nunca`)
+permite forçar o comportamento por lote quando a detecção erra. A linha do
+job mostra a decisão efetiva e sua origem — `OCR: sim (detectado)`,
+`OCR: não (forçado)` — para o resultado ser auditável.
+
+**Modo de falha conhecido:** um manual nativo com um apêndice digitalizado
+é detectado como nativo (a maioria das páginas amostradas tem texto), o
+OCR fica desligado para o documento inteiro, e as páginas escaneadas do
+apêndice saem vazias. É exatamente para esse caso que o override `sempre`
+existe — a detecção é por documento, não por página, de propósito (ver
+`docs/backend.md` para o raciocínio completo).
+
 ## Aceleração por GPU
 
 O pipeline tem **dois estágios independentes**, com suportes de hardware diferentes.

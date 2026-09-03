@@ -155,6 +155,14 @@ html[data-theme="dark"] .toggle-tema .icone-lua { display: block; }
 .dropzone-sub .destaque { color: var(--accent); font-weight: 600; }
 .dropzone-nota { font-size: 11px; color: var(--text-faint); font-family: "IBM Plex Mono", monospace; margin-top: 4px; }
 
+.seletor-ocr {
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  padding: 0 4px; font-size: 12.5px; color: var(--text-muted);
+}
+.seletor-ocr-rotulo { font-weight: 600; color: var(--text); }
+.seletor-ocr label { display: flex; align-items: center; gap: 5px; cursor: pointer; }
+.seletor-ocr input[type="radio"] { accent-color: var(--accent); cursor: pointer; }
+
 /* Fila */
 .fila-card { border: 1px solid var(--border); border-radius: 14px; background: var(--surface); overflow: hidden; }
 .fila-cabecalho {

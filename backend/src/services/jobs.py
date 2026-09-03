@@ -15,7 +15,7 @@ import logging
 import queue
 import threading
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace as _dc_replace
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -58,6 +58,12 @@ class Job:
     tamanho_bytes: int = 0
     iniciado_em: datetime | None = None
     segundos: float = 0.0
+    # TAREFA-3: decisao de OCR efetiva para este job (detectada ou forcada
+    # pelo seletor de 3 estados na UI) e sua origem, pra UI mostrar "OCR: sim
+    # (detectado)" / "OCR: nao (forcado)" - auditavel quando o resultado sai
+    # pior que o esperado. Ver criar_job(modo_ocr=...).
+    ocr: bool = True
+    ocr_origem: str = "detectado"  # "detectado" | "forcado"
 
     def to_dict(self, *, posicao_na_fila: int | None = None) -> dict:
         pagina_estimada: float | None = None
@@ -93,6 +99,8 @@ class Job:
             "estimado": estimado,
             "estimativa_segundos": estimativa_segundos,
             "estimativa_baixa_confianca": _amostras_ema < _AMOSTRAS_PARA_CONFIANCA,
+            "ocr": self.ocr,
+            "ocr_origem": self.ocr_origem,
             "mensagem_erro": self.mensagem_erro or None,
         }
         if posicao_na_fila is not None:
@@ -163,10 +171,40 @@ def alocar_caminho_pdf(*, diretorio: Path | None = None) -> tuple[str, Path]:
     return job_id, alvo / f"{job_id}.pdf"
 
 
-def criar_job(nome_original: str, caminho_pdf: Path) -> Job:
+MODOS_OCR = {"automatico", "sempre", "nunca"}
+
+
+def _decidir_ocr(caminho_pdf: Path, modo_ocr: str) -> tuple[bool, str]:
+    """TAREFA-3: decide o OCR efetivo do job. 'sempre'/'nunca' forcam,
+    ignorando a deteccao. 'automatico' (e qualquer valor desconhecido, pra
+    nao quebrar um cliente antigo) roda tem_camada_de_texto() - na duvida
+    (excecao/PDF ilegivel), o padrao e RODAR ocr: perder conteudo de um scan
+    tratado como nativo e pior que gastar tempo rodando ocr num nativo."""
+    if modo_ocr == "sempre":
+        return True, "forcado"
+    if modo_ocr == "nunca":
+        return False, "forcado"
+    try:
+        tem_texto = m.tem_camada_de_texto(caminho_pdf)
+    except m.PdfIlegivel:
+        tem_texto = False
+    return (not tem_texto), "detectado"
+
+
+def criar_job(nome_original: str, caminho_pdf: Path, *, modo_ocr: str = "automatico") -> Job:
     """Registra um novo job 'na_fila' para um PDF JA GRAVADO em disco em
     caminho_pdf (ver alocar_caminho_pdf() para gerar job_id + caminho antes
-    de escrever). O job_id e o nome do arquivo sem extensao."""
+    de escrever). O job_id e o nome do arquivo sem extensao.
+
+    modo_ocr ("automatico"/"sempre"/"nunca", vindo do seletor de 3 estados
+    da UI) decide job.ocr/job.ocr_origem - ver _decidir_ocr(). NOTA (rodada
+    3, TAREFA-3): ate a TAREFA-4 (motor_pool com um converter por modo de
+    OCR), MotorDocling cacheia UM converter por processo com o do_ocr do
+    PRIMEIRO job processado - a decisao por job fica registrada aqui e e
+    repassada a converter_arquivo() por _processar(), mas so tem efeito
+    pratico completo no motor 'simples' (que nao faz OCR de qualquer jeito)
+    ate a TAREFA-4 fechar o motor Docling.
+    """
     job_id = caminho_pdf.stem
     tamanho_bytes = caminho_pdf.stat().st_size
     # Checagem barata (pypdfium2, sem carregar modelos) - mesma usada por --max-pages
@@ -177,12 +215,15 @@ def criar_job(nome_original: str, caminho_pdf: Path) -> Job:
         paginas = m.contar_paginas(caminho_pdf)
     except m.PdfIlegivel:
         paginas = None
+    ocr, ocr_origem = _decidir_ocr(caminho_pdf, modo_ocr)
     job = Job(
         id=job_id,
         nome_original=nome_original,
         caminho_pdf=caminho_pdf,
         paginas_totais=paginas,
         tamanho_bytes=tamanho_bytes,
+        ocr=ocr,
+        ocr_origem=ocr_origem,
     )
     _store.adicionar(job)
     return job
@@ -288,7 +329,15 @@ def _processar(job_id: str) -> None:
     job.iniciado_em = datetime.now(timezone.utc)
     job.status = "processando"
     motor = motor_pool.obter_motor()
-    cfg = motor_pool.obter_config()
+    # Config por job, nao o global de motor_pool direto: job.ocr (TAREFA-3)
+    # pode divergir do padrao do processo. dataclasses.replace() copia sem
+    # mutar o Config compartilhado (motor_pool.obter_config() devolve a
+    # MESMA instancia pra todo mundo). Ate a TAREFA-4 dar ao MotorDocling um
+    # converter por modo de OCR, isso e respeitado de verdade pelo motor
+    # 'simples' (nao faz OCR de qualquer jeito); o Docling cacheia um unico
+    # converter com o do_ocr do primeiro job processado no processo - ver
+    # criar_job() e a TAREFA-4.
+    cfg = _dc_replace(motor_pool.obter_config(), ocr=job.ocr)
     saida = job.caminho_pdf.with_suffix(".md")
 
     resultado = m.converter_arquivo(job.caminho_pdf, saida, motor, cfg)

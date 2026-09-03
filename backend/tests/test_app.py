@@ -135,6 +135,48 @@ class TestCriarJobsEndpoint(unittest.TestCase):
         self.assertEqual(len(corpo["rejeitados"]), 1)
         self.assertEqual(corpo["rejeitados"][0]["nome_original"], "nota.txt")
 
+    def _pdf_com_texto_substantivo(self) -> bytes:
+        from fpdf import FPDF
+        pdf = FPDF()
+        for _ in range(3):
+            pdf.add_page()
+            pdf.set_font("helvetica", size=12)
+            pdf.multi_cell(0, 8, "Conteudo real de uma pagina de manual. " * 5)
+        return bytes(pdf.output())
+
+    def test_modo_ocr_padrao_e_automatico_e_detecta_pelo_conteudo(self):
+        """TAREFA-3: sem enviar modo_ocr, o comportamento e 'automatico' -
+        cliente antigo que nao manda o campo continua funcionando."""
+        with TestClient(app) as cliente:
+            corpo = cliente.post(
+                "/api/jobs",
+                files={"files": ("nativo.pdf", self._pdf_com_texto_substantivo(), "application/pdf")},
+            ).json()
+        criado = corpo["criados"][0]
+        self.assertEqual(criado["ocr_origem"], "detectado")
+        self.assertFalse(criado["ocr"])  # tem texto -> nao precisa de ocr
+
+    def test_modo_ocr_sempre_forca_via_form(self):
+        with TestClient(app) as cliente:
+            corpo = cliente.post(
+                "/api/jobs",
+                files={"files": ("nativo.pdf", self._pdf_com_texto_substantivo(), "application/pdf")},
+                data={"modo_ocr": "sempre"},
+            ).json()
+        criado = corpo["criados"][0]
+        self.assertTrue(criado["ocr"])
+        self.assertEqual(criado["ocr_origem"], "forcado")
+
+    def test_modo_ocr_desconhecido_cai_para_automatico_em_vez_de_rejeitar(self):
+        with TestClient(app) as cliente:
+            resposta = cliente.post(
+                "/api/jobs",
+                files={"files": ("nativo.pdf", self._pdf_com_texto_substantivo(), "application/pdf")},
+                data={"modo_ocr": "valor-bogus"},
+            )
+        self.assertEqual(resposta.status_code, 200)
+        self.assertEqual(resposta.json()["criados"][0]["ocr_origem"], "detectado")
+
     def test_lote_misto_separa_criados_de_rejeitados(self):
         with TestClient(app) as cliente:
             resposta = cliente.post(

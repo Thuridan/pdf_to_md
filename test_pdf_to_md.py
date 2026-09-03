@@ -40,6 +40,23 @@ def gerar_pdf(caminho: Path, linhas: list[str], paginas: int = 1) -> Path:
     return caminho
 
 
+def gerar_pdf_paginas(caminho: Path, paginas: list[str | None]) -> Path:
+    """Como gerar_pdf, mas cada elemento de `paginas` e o texto dessa pagina
+    (ou None pra pagina em branco, sem NENHUM conteudo de texto) - usado
+    para testar tem_camada_de_texto() com documentos mistos."""
+    from fpdf import FPDF
+
+    pdf = FPDF()
+    for texto in paginas:
+        pdf.add_page()
+        if texto is not None:
+            pdf.set_font("helvetica", size=12)
+            pdf.multi_cell(0, 8, texto)
+    caminho.parent.mkdir(parents=True, exist_ok=True)
+    pdf.output(str(caminho))
+    return caminho
+
+
 def instalar_stub_docling(*, status="success", markdown="# Convertido\n\ntexto",
                           erro: Exception | None = None) -> dict:
     """Injeta um docling falso em sys.modules e devolve o registro de chamadas."""
@@ -616,6 +633,21 @@ class TestEmpacotamento(unittest.TestCase):
         # deixado no "indisponivel" de uma falha anterior.
         self.assertIn("carregarMotor()", js)
 
+    def test_frontend_tem_seletor_de_ocr_e_mostra_a_decisao_por_job(self):
+        """TAREFA-3 (rodada 3): seletor de 3 estados aplicado ao lote
+        enviado, mais a decisao efetiva/origem exibida na linha do job."""
+        raiz = Path(__file__).resolve().parent / "frontend"
+        html = (raiz / "index.html").read_text(encoding="utf-8")
+        self.assertIn('name="modo-ocr"', html)
+        self.assertIn('value="automatico"', html)
+        self.assertIn('value="sempre"', html)
+        self.assertIn('value="nunca"', html)
+
+        js = (raiz / "app.js").read_text(encoding="utf-8")
+        self.assertIn("modoOcrSelecionado", js)
+        self.assertIn("modo_ocr", js)  # enviado no FormData do upload
+        self.assertIn("rotuloOcr", js)
+
     def test_frontend_nao_afirma_gpu_ou_docling_incondicionalmente(self):
         """BUG-17: badge/resumo/rodape do frontend diziam "Aguardando GPU" e
         "motor Docling" incondicionalmente, mesmo quando o motor real e
@@ -847,6 +879,63 @@ class TestGPU(BaseTemp):
 # ---------------------------------------------------------------------------
 # 10. Pre-checagem de paginas (--max-pages)
 # ---------------------------------------------------------------------------
+class TestDeteccaoOcr(BaseTemp):
+    """TAREFA-3 (rodada 3): tem_camada_de_texto(). Parametros calibrados
+    contra documentos reais (nao sinteticos) - ver relatorio da rodada 3
+    para os documentos usados e os numeros observados. Os fixtures sinteticos
+    aqui (fpdf2) validam a LOGICA da amostragem/proporcao, nao recalibram os
+    limiares."""
+
+    TEXTO_SUBSTANTIVO = "Conteudo real de uma pagina de manual. " * 5  # bem acima de 40 chars
+
+    def test_documento_com_texto_em_todas_paginas_e_detectado_como_nativo(self):
+        # texto de uma linha curta (gerar_pdf) fica abaixo do piso de
+        # substancia por pagina de proposito - real (uma pagina de manual
+        # tem centenas/milhares de chars, nao uma linha) usa texto mais longo.
+        pdf = gerar_pdf_paginas(self.tmp / "nativo.pdf", [self.TEXTO_SUBSTANTIVO] * 10)
+        self.assertTrue(m.tem_camada_de_texto(pdf))
+
+    def test_documento_sem_texto_em_nenhuma_pagina_e_detectado_como_digitalizado(self):
+        pdf = gerar_pdf_paginas(self.tmp / "scan.pdf", [None] * 10)
+        self.assertFalse(m.tem_camada_de_texto(pdf))
+
+    def test_maioria_com_texto_ainda_conta_como_nativo_apesar_de_paginas_em_branco(self):
+        """Paginas legitimamente sem texto (diagramas, separadores) num
+        documento nativo nao devem empurrar a decisao para 'digitalizado'."""
+        paginas = [self.TEXTO_SUBSTANTIVO] * 8 + [None] * 2  # 80% com texto
+        pdf = gerar_pdf_paginas(self.tmp / "nativo_com_lacunas.pdf", paginas)
+        self.assertTrue(m.tem_camada_de_texto(pdf))
+
+    def test_maioria_sem_texto_conta_como_digitalizado_mesmo_com_algumas_paginas_com_texto(self):
+        """Um apendice OCRizavel misturado (minoria) nao deve enganar a
+        deteccao pro lado 'nativo, pula OCR' - o padrao e RODAR ocr quando
+        a maioria da amostra nao tem texto (falso negativo so desperdica
+        tempo; falso positivo perde conteudo)."""
+        paginas = [self.TEXTO_SUBSTANTIVO] * 3 + [None] * 7  # 30% com texto
+        pdf = gerar_pdf_paginas(self.tmp / "digitalizado_com_texto_esparso.pdf", paginas)
+        self.assertFalse(m.tem_camada_de_texto(pdf))
+
+    def test_amostragem_e_distribuida_nao_so_as_primeiras_paginas(self):
+        """As primeiras 3 paginas (branco) nao representam um documento de
+        20 paginas onde as demais 17 tem texto - amostragem por indices
+        distribuidos, nao 'primeiras N', tem que ver o resto."""
+        paginas = [None] * 3 + [self.TEXTO_SUBSTANTIVO] * 17
+        pdf = gerar_pdf_paginas(self.tmp / "capa_em_branco.pdf", paginas)
+        self.assertTrue(m.tem_camada_de_texto(pdf))
+
+    def test_pdf_ilegivel_levanta_pdfilegivel(self):
+        ruim = self.tmp / "ruim.pdf"
+        ruim.write_bytes(b"%PDF-1.4 lixo nao e um pdf valido")
+        with self.assertRaises(m.PdfIlegivel):
+            m.tem_camada_de_texto(ruim)
+
+    def test_documento_vazio_de_zero_paginas_nao_conta_como_nativo(self):
+        from fpdf import FPDF
+        pdf_vazio = self.tmp / "vazio.pdf"
+        FPDF().output(str(pdf_vazio))  # PDF valido, zero paginas
+        self.assertFalse(m.tem_camada_de_texto(pdf_vazio))
+
+
 class TestMaxPages(BaseTemp):
     def test_bloqueia_pdf_com_mais_paginas_que_o_limite(self):
         pdf = gerar_pdf(self.tmp / "grande.pdf", ["linha"], paginas=5)

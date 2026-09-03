@@ -96,10 +96,16 @@ async function carregarVersao() {
 }
 
 // --- upload ---------------------------------------------------------------
+function modoOcrSelecionado() {
+  const marcado = document.querySelector('input[name="modo-ocr"]:checked');
+  return marcado ? marcado.value : "automatico";
+}
+
 async function enviarArquivos(files) {
   if (!files.length) return;
   const formData = new FormData();
   for (const arquivo of files) formData.append("files", arquivo);
+  formData.append("modo_ocr", modoOcrSelecionado());
 
   try {
     const resp = await fetch("/api/jobs", { method: "POST", body: formData });
@@ -189,12 +195,22 @@ const ICONE_LIXEIRA =
   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 7h14"></path><path d="M9 7V5a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"></path><path d="M7 7l1 13a1 1 0 0 0 1 1h6a1 1 0 0 0 1-1l1-13"></path></svg>';
 
 // --- renderizacao da fila ---------------------------------------------------
+// "OCR: sim (detectado)" / "OCR: não (forçado)" - a decisao efetiva e sua
+// origem, auditavel quando o resultado sair pior que o esperado (TAREFA-3).
+function rotuloOcr(job) {
+  if (job.ocr_origem == null) return null;
+  const origem = job.ocr_origem === "forcado" ? "forçado" : "detectado";
+  return `OCR: ${job.ocr ? "sim" : "não"} (${origem})`;
+}
+
 function metaLinha(job) {
   const partes = [];
   if (job.paginas_totais != null) {
     partes.push(`${job.paginas_totais} página${job.paginas_totais === 1 ? "" : "s"}`);
   }
   if (job.tamanho_bytes) partes.push(formatarTamanho(job.tamanho_bytes));
+  const ocr = rotuloOcr(job);
+  if (ocr) partes.push(ocr);
   return partes.join(" · ");
 }
 

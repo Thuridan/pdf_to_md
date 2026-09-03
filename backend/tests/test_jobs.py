@@ -41,6 +41,22 @@ def _gerar_pdf_valido(caminho: Path, paginas: int = 1) -> None:
     pdf.output(str(caminho))
 
 
+def _gerar_pdf_com_texto_substantivo(caminho: Path, paginas: int = 1) -> None:
+    """Como _gerar_pdf_valido, mas com texto bem acima do piso de 40 chars
+    por pagina que tem_camada_de_texto() exige (a linha curta de
+    _gerar_pdf_valido fica abaixo desse piso de proposito - real e mais
+    denso que uma linha)."""
+    from fpdf import FPDF
+
+    pdf = FPDF()
+    for _ in range(paginas):
+        pdf.add_page()
+        pdf.set_font("helvetica", size=12)
+        pdf.multi_cell(0, 8, "Conteudo real de uma pagina de manual. " * 5)
+    caminho.parent.mkdir(parents=True, exist_ok=True)
+    pdf.output(str(caminho))
+
+
 def _escrever_e_criar_job(nome_original: str, conteudo: bytes, *, diretorio: Path) -> jobs.Job:
     """Helper de teste: grava `conteudo` num arquivo em `diretorio` e registra
     um Job para ele. jobs.criar_job() passou a receber um caminho ja gravado
@@ -474,6 +490,60 @@ class TestCriarJobPaginas(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             job = _escrever_e_criar_job("ruim.pdf", b"nao e um pdf de verdade", diretorio=Path(tmp))
             self.assertIsNone(job.paginas_totais)
+
+
+class TestCriarJobDecisaoOcr(unittest.TestCase):
+    """TAREFA-3: modo_ocr ("automatico"/"sempre"/"nunca") decide job.ocr e
+    job.ocr_origem na criacao."""
+
+    def test_sempre_forca_ocr_ligado_independente_do_conteudo(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            caminho = Path(tmp) / "fonte.pdf"
+            _gerar_pdf_com_texto_substantivo(caminho, paginas=3)  # tem texto de sobra
+            job = jobs.criar_job("doc.pdf", caminho, modo_ocr="sempre")
+            self.assertTrue(job.ocr)
+            self.assertEqual(job.ocr_origem, "forcado")
+
+    def test_nunca_forca_ocr_desligado_independente_do_conteudo(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            caminho = Path(tmp) / "sem_texto.pdf"
+            caminho.write_bytes(b"nao e um pdf de verdade")  # "digitalizado" simulado
+            job = jobs.criar_job("doc.pdf", caminho, modo_ocr="nunca")
+            self.assertFalse(job.ocr)
+            self.assertEqual(job.ocr_origem, "forcado")
+
+    def test_automatico_com_texto_desliga_ocr_por_deteccao(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            caminho = Path(tmp) / "nativo.pdf"
+            _gerar_pdf_com_texto_substantivo(caminho, paginas=5)
+            job = jobs.criar_job("doc.pdf", caminho, modo_ocr="automatico")
+            self.assertFalse(job.ocr)
+            self.assertEqual(job.ocr_origem, "detectado")
+
+    def test_automatico_sem_texto_liga_ocr_por_deteccao(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            caminho = Path(tmp) / "scan.pdf"
+            _gerar_pdf_valido(caminho, paginas=3)  # texto curto, abaixo do piso
+            job = jobs.criar_job("doc.pdf", caminho, modo_ocr="automatico")
+            self.assertTrue(job.ocr)
+            self.assertEqual(job.ocr_origem, "detectado")
+
+    def test_padrao_e_automatico_quando_modo_nao_informado(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            caminho = Path(tmp) / "nativo.pdf"
+            _gerar_pdf_com_texto_substantivo(caminho, paginas=3)
+            job = jobs.criar_job("doc.pdf", caminho)  # sem modo_ocr=
+            self.assertEqual(job.ocr_origem, "detectado")
+
+    def test_automatico_com_pdf_ilegivel_assume_ocr_ligado_por_seguranca(self):
+        """Na duvida (PdfIlegivel), o padrao e RODAR ocr - perder conteudo
+        de um scan tratado como nativo e pior que gastar tempo com ocr."""
+        with tempfile.TemporaryDirectory() as tmp:
+            caminho = Path(tmp) / "ilegivel.pdf"
+            caminho.write_bytes(b"%PDF-1.4 lixo nao e um pdf valido")
+            job = jobs.criar_job("doc.pdf", caminho, modo_ocr="automatico")
+            self.assertTrue(job.ocr)
+            self.assertEqual(job.ocr_origem, "detectado")
 
 
 class TestProgressoDict(unittest.TestCase):
