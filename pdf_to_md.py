@@ -113,6 +113,43 @@ class PdfIlegivel(RuntimeError):
     """
 
 
+# Sentinela interna para o page_break_placeholder do docling_core - o valor
+# literal nunca aparece no markdown final. docling_core NAO interpola o
+# numero da pagina nesse parametro: e uma string fixa, a mesma em toda
+# quebra (rodada 5, TAREFA-1 - verificado lendo
+# docling_core/transforms/serializer/markdown.py: MarkdownDocSerializer
+# guarda prev_page/next_page no marcador interno, mas serialize_doc() so usa
+# self.params.page_break_placeholder, descartando os dois numeros).
+# Por isso a numeracao e feita aqui, em _numerar_paginas(), contando as
+# quebras em ordem - elas aparecem sempre em ordem crescente de pagina.
+_SENTINELA_QUEBRA_DE_PAGINA = "\x00_PDFTOMD_QUEBRA_DE_PAGINA_\x00"
+
+
+def _marcador_pagina(numero: int) -> str:
+    """Formato do marcador de pagina de origem - usado pelos dois motores,
+    para a saida ficar identica independente de qual gerou o arquivo."""
+    return f"<!-- página {numero} -->"
+
+
+def _numerar_paginas(markdown: str, sentinela: str = _SENTINELA_QUEBRA_DE_PAGINA) -> str:
+    """Troca os marcadores de quebra de pagina (literais, sem numero) por
+    marcadores numerados sequenciais, e marca tambem o inicio da pagina 1
+    (que o docling_core nao marca - so ha marcador nas quebras ENTRE
+    paginas). Cada marcador fica isolado por linhas em branco, entao nao
+    pode corromper uma tabela ou bloco de codigo cuja sintaxe dependa de
+    estar sem interrupcao - a quebra do docling_core so aparece ENTRE partes
+    ja serializadas (cada tabela/paragrafo e uma unidade), nunca no meio de
+    uma."""
+    if sentinela not in markdown:
+        return f"{_marcador_pagina(1)}\n\n{markdown}"
+    partes = markdown.split(sentinela)
+    pedacos = [_marcador_pagina(1), "\n\n", partes[0]]
+    for indice, parte in enumerate(partes[1:], start=2):
+        pedacos.append(f"\n\n{_marcador_pagina(indice)}\n\n")
+        pedacos.append(parte)
+    return "".join(pedacos)
+
+
 class MotorBase:
     nome = "base"
 
@@ -262,7 +299,10 @@ class MotorDocling(MotorBase):
         if rotulo == "partial_success":
             LOG.warning("%s: conversao parcial, parte do conteudo pode faltar.", pdf.name)
 
-        return resultado.document.export_to_markdown()
+        markdown = resultado.document.export_to_markdown(
+            page_break_placeholder=_SENTINELA_QUEBRA_DE_PAGINA
+        )
+        return _numerar_paginas(markdown)
 
 
 class MotorSimples(MotorBase):
@@ -294,12 +334,16 @@ class MotorSimples(MotorBase):
                 # PDFium devolve CRLF; normaliza para nao gerar .md misto.
                 texto = texto.replace("\r\n", "\n").replace("\r", "\n").strip()
                 if texto:
-                    partes.append(texto)
+                    # Numero real da pagina (1-indexado) - paginas em
+                    # branco (sem texto) nao geram marcador, o mesmo
+                    # comportamento do MotorDocling (que so marca quebras
+                    # entre paginas com conteudo serializado).
+                    partes.append(f"{_marcador_pagina(i + 1)}\n\n{texto}")
             if not partes:
                 raise ErroConversao(
                     "nenhum texto extraivel (PDF digitalizado?) - use --engine docling com --ocr"
                 )
-            return "\n\n---\n\n".join(partes) + "\n"
+            return "\n\n".join(partes) + "\n"
         finally:
             doc.close()
 

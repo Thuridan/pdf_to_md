@@ -145,7 +145,8 @@ def instalar_stub_docling(*, status="success", markdown="# Convertido\n\ntexto",
             self.pipeline_options = pipeline_options
 
     class _Doc:
-        def export_to_markdown(self):
+        def export_to_markdown(self, **kwargs):
+            registro["export_kwargs"] = kwargs
             return markdown
 
     class _Res:
@@ -383,7 +384,10 @@ class TestMotorDocling(BaseTemp):
         reg = instalar_stub_docling()
         motor = m.MotorDocling(m.Config(lang=["pt"], threads=8, tables="accurate"))
         pdf = gerar_pdf(self.tmp / "a.pdf", ["A"])
-        self.assertEqual(motor.converter(pdf), "# Convertido\n\ntexto")
+        self.assertEqual(
+            motor.converter(pdf),
+            f"{m._marcador_pagina(1)}\n\n# Convertido\n\ntexto",
+        )
         o = reg["opcoes"]
         self.assertTrue(o.do_ocr)
         self.assertEqual(o.ocr_options.kind, "rapidocr")
@@ -475,6 +479,65 @@ class TestMotorDocling(BaseTemp):
             motor.converter(gerar_pdf(self.tmp / f"{i}.pdf", ["A"]))
         self.assertEqual(reg["instancias"], 1)
         self.assertEqual(len(reg["convertidos"]), 3)
+
+    def test_pede_page_break_placeholder_ao_docling(self):
+        """Rodada 5, TAREFA-1: sem esse parametro o docling_core nao insere
+        NENHUMA quebra de pagina no markdown - a saida fica sem sinal
+        nenhum de origem por pagina."""
+        reg = instalar_stub_docling()
+        motor = m.MotorDocling(m.Config())
+        motor.converter(gerar_pdf(self.tmp / "a.pdf", ["A"]))
+        self.assertEqual(
+            reg["export_kwargs"].get("page_break_placeholder"),
+            m._SENTINELA_QUEBRA_DE_PAGINA,
+        )
+
+    def test_numera_paginas_a_partir_da_saida_do_docling(self):
+        """A sentinela devolvida pelo docling_core (stub) e literal - sem
+        numero - a numeracao e feita em _numerar_paginas() por ordem."""
+        sentinela = m._SENTINELA_QUEBRA_DE_PAGINA
+        bruto = f"conteudo 1{sentinela}conteudo 2{sentinela}conteudo 3"
+        instalar_stub_docling(markdown=bruto)
+        motor = m.MotorDocling(m.Config())
+        saida = motor.converter(gerar_pdf(self.tmp / "a.pdf", ["A"]))
+        self.assertEqual(
+            saida,
+            f"{m._marcador_pagina(1)}\n\nconteudo 1"
+            f"\n\n{m._marcador_pagina(2)}\n\nconteudo 2"
+            f"\n\n{m._marcador_pagina(3)}\n\nconteudo 3",
+        )
+
+
+# ---------------------------------------------------------------------------
+# 3b. _numerar_paginas() - funcao pura, sem depender do docling
+# ---------------------------------------------------------------------------
+class TestNumerarPaginas(unittest.TestCase):
+    def test_sem_quebra_ainda_marca_pagina_1(self):
+        self.assertEqual(
+            m._numerar_paginas("so uma pagina, sem quebra nenhuma"),
+            f"{m._marcador_pagina(1)}\n\nso uma pagina, sem quebra nenhuma",
+        )
+
+    def test_duas_quebras_geram_tres_marcadores_em_ordem(self):
+        s = m._SENTINELA_QUEBRA_DE_PAGINA
+        saida = m._numerar_paginas(f"a{s}b{s}c")
+        for n in (1, 2, 3):
+            self.assertIn(m._marcador_pagina(n), saida)
+        self.assertLess(saida.index(m._marcador_pagina(1)), saida.index(m._marcador_pagina(2)))
+        self.assertLess(saida.index(m._marcador_pagina(2)), saida.index(m._marcador_pagina(3)))
+
+    def test_marcador_isolado_por_linhas_em_branco_nao_gruda_no_conteudo(self):
+        """Cobre o requisito do prompt de nao quebrar tabela/bloco de
+        codigo: o marcador so pode aparecer isolado, nunca colado a uma
+        linha de tabela ("| ... |") ou dentro de um bloco ```."""
+        s = m._SENTINELA_QUEBRA_DE_PAGINA
+        tabela = "| a | b |\n| - | - |\n| 1 | 2 |"
+        saida = m._numerar_paginas(f"{tabela}{s}resto")
+        self.assertIn(f"{tabela}\n\n{m._marcador_pagina(2)}\n\nresto", saida)
+
+    def test_sentinela_customizada(self):
+        saida = m._numerar_paginas("aXb", sentinela="X")
+        self.assertEqual(saida, f"{m._marcador_pagina(1)}\n\na\n\n{m._marcador_pagina(2)}\n\nb")
 
 
 # ---------------------------------------------------------------------------
@@ -717,8 +780,9 @@ class TestCLI(BaseTemp):
         pdf = gerar_pdf(self.tmp / "multi.pdf", ["Conteudo"], paginas=3)
         self.assertEqual(self._rodar("-i", str(pdf)), m.EXIT_OK)
         md = (self.tmp / "multi.md").read_text(encoding="utf-8")
-        self.assertEqual(md.count("---"), 2)
         self.assertIn("(p3)", md)
+        for pagina in (1, 2, 3):
+            self.assertIn(m._marcador_pagina(pagina), md)
 
     def test_lote_recursivo_espelha_estrutura(self):
         gerar_pdf(self.tmp / "in" / "a.pdf", ["A"])

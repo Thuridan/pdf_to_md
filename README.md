@@ -251,6 +251,16 @@ Use `python pdf_to_md.py --hardware` para ver o que a máquina realmente oferece
 - Para documentos digitais (gerados por editor, não digitalizados), `--no-ocr` reduz
   drasticamente o tempo sem perda de qualidade.
 
+## Marcadores de página
+
+Todo `.md` gerado (pelos dois motores) traz `<!-- página N -->` no início
+de cada página de origem — inclusive a primeira. Serve pra achar de qual
+página do PDF veio um trecho, e para diagnosticar problemas (um pico de
+memória, um erro no meio de um lote) sem precisar reconverter e adivinhar
+a posição. No `MotorDocling`, o `docling_core` não numera essas quebras
+sozinho — a numeração é feita depois, contando as quebras em ordem, já que
+elas aparecem sempre em ordem crescente de página.
+
 ## Reprodutibilidade
 
 O `pyproject.toml` fixa faixas de versão (ex.: `docling[rapidocr]>=2.100,<3`)

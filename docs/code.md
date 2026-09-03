@@ -135,7 +135,32 @@ trabalho de fato). Duas implementações:
   `skipped` viram `ErroConversao` (com até 3 mensagens de erro do Docling
   agregadas); `partial_success` gera um aviso mas segue adiante (parte do
   conteúdo pode faltar, mas ainda é usável). Só então
-  `resultado.document.export_to_markdown()` produz a string final.
+  `resultado.document.export_to_markdown(page_break_placeholder=...)`
+  produz a string final — ver "Marcadores de página" abaixo.
+
+### Marcadores de página (rodada 5, TAREFA-1)
+
+`export_to_markdown()` aceita `page_break_placeholder`, mas o
+`docling_core` **não interpola o número da página** nele — é uma string
+literal fixa, a mesma em toda quebra (confirmado lendo
+`docling_core/transforms/serializer/markdown.py`: o marcador interno
+carrega `prev_page`/`next_page`, mas `serialize_doc()` descarta os dois e
+só usa `self.params.page_break_placeholder`). Por isso `pdf_to_md.py`
+passa uma sentinela interna (`_SENTINELA_QUEBRA_DE_PAGINA`, nunca aparece
+no `.md` final) e faz a numeração ele mesmo em `_numerar_paginas()`: como
+as quebras aparecem sempre em ordem crescente de página, a N-ésima quebra
+é sempre a transição para a página N+1 — não precisa saber o número real
+devolvido pelo Docling. Cada marcador (`<!-- página N -->`) fica isolado
+por linhas em branco, incluindo o da página 1 (que o Docling não marca —
+só marca as quebras *entre* páginas, nunca o início do documento).
+`MotorSimples` usa o mesmo formato de marcador (`_marcador_pagina()`),
+com o número real da página do PDF — páginas sem texto extraível não
+geram marcador, o que corresponde ao mesmo comportamento observado no
+Docling (só marca transições entre páginas com conteúdo serializado).
+Verificado num extrato real de 46 páginas (`teste.pdf`, páginas 50–95):
+46 marcadores, sequenciais, sem furo, nos dois motores — e nenhum caiu no
+meio de uma linha de tabela ou dentro de um bloco de código (o Docling só
+insere a quebra *entre* unidades já serializadas, nunca dentro de uma).
 
 ### `MotorSimples` — leve, sem IA
 
@@ -151,8 +176,9 @@ Só lê a camada de texto nativa do PDF via `pypdfium2` — sem OCR, sem
 detecção de tabelas, sem modelo nenhum carregado. O parâmetro `ocr` existe
 só para casar a assinatura com `MotorBase`/`MotorDocling` (rodada 3,
 TAREFA-4) — é ignorado, este motor nunca faz OCR de qualquer jeito. Páginas
-concatenadas com
-separador `\n\n---\n\n` (um único documento Markdown, não um por página). Se
+concatenadas com o mesmo marcador de página do `MotorDocling`
+(`<!-- página N -->`, rodada 5, TAREFA-1 — antes era `\n\n---\n\n`, sem
+número nenhum) num único documento Markdown, não um `.md` por página. Se
 nenhuma página tiver texto extraível (PDF puramente escaneado), levanta
 `ErroConversao` com uma dica explícita para usar `--engine docling --ocr` —
 o erro já aponta o caminho de resolução, não só o problema.
