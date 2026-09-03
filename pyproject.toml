@@ -31,6 +31,10 @@ dev = ["fpdf2>=2.7,<3"]
 # Aplicacao web (v3.0): API FastAPI por cima do pdf_to_md.py existente.
 # `pdf-to-md[simples]` garante que a aplicacao tenha ao menos um motor
 # funcional mesmo sem o extra `docling` (pesado, opt-in).
+# Este extra so traz as DEPENDENCIAS - o wheel nao empacota backend/ nem
+# frontend/ (py-modules = ["pdf_to_md"] abaixo cobre so a CLI). Rodar
+# `uvicorn backend.src.app:app` exige CWD dentro do repositorio clonado;
+# ver dependencies.md#entry-point para o raciocinio completo.
 web = [
     "pdf-to-md[simples]",
     "fastapi>=0.115,<1",

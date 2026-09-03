@@ -137,7 +137,13 @@ Interface de upload com fila de conversão, progresso e download individual/em l
 construída sobre o mesmo `pdf_to_md.py` (um único motor Docling reaproveitado por
 processo — mesma garantia da CLI para um lote).
 
+`pip install ".[web]"` traz só as dependências (FastAPI/uvicorn); o wheel não
+empacota `backend/` nem `frontend/` (só `pdf_to_md.py`, para a CLI). A
+aplicação web roda **a partir do repositório clonado**, não de um pacote
+instalado em outro lugar:
+
 ```bash
+git clone <este-repositorio> && cd pdf_to_md
 pip install ".[web]"   # além de ".[docling]" ou ".[simples]", conforme o motor desejado
 ./scripts/start.sh              # sobe em background (0.0.0.0:8000), aguarda /api/health
 ./scripts/restart.sh

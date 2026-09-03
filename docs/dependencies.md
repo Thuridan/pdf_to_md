@@ -126,6 +126,18 @@ Instalar o pacote (`pip install .`) registra o comando `pdf-to-md` no
 mesma função chamada por `python pdf_to_md.py` via
 `if __name__ == "__main__":`.
 
+**O wheel cobre só a CLI.** `[tool.setuptools] py-modules = ["pdf_to_md"]`
+empacota exclusivamente `pdf_to_md.py`; `backend/` e `frontend/` nunca entram
+no wheel (confirmado no conteúdo do wheel construído: só `pdf_to_md.py` e o
+`dist-info`). O extra `web` traz as dependências (FastAPI, uvicorn) para
+rodar a aplicação, mas `python -m uvicorn backend.src.app:app` só funciona
+com o diretório de trabalho dentro do repositório clonado — é exatamente
+isso que `scripts/start.sh` já assume (`cd` para o próprio diretório do
+script antes de invocar o uvicorn). Isso é deliberado, não uma lacuna de
+empacotamento: é a mesma escolha de escopo de
+[`architecture.md`](architecture.md#persistência-ou-a-ausência-dela) —
+ferramenta local/single-tenant, não um serviço redistribuível via wheel.
+
 ## Dependências do frontend
 
 Nenhuma. `frontend/` não tem `package.json` — ver
