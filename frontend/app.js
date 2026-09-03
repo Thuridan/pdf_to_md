@@ -242,11 +242,21 @@ function renderizarFila() {
     : '<div class="fila-vazia">Nenhum PDF na fila ainda.</div>';
 }
 
+// Numero de sequencia: setInterval nao espera o poll anterior terminar, e
+// enviarArquivos()/removerJob() tambem chamam atualizarFila() por fora do
+// ciclo (para refletir a acao na hora). Com o processo ocupado, respostas
+// atrasadas podem chegar fora de ordem - sem isso, uma resposta antiga que
+// chegue depois de uma mais nova sobrescrevia jobsCache e fazia a fila
+// "andar para tras" (ex.: um job Concluido voltar a aparecer Processando).
+let seqAtual = 0;
+
 async function atualizarFila() {
+  const seq = ++seqAtual;
   try {
     const resp = await fetch("/api/jobs");
-    if (!resp.ok) return;
+    if (!resp.ok || seq !== seqAtual) return;
     const dados = await resp.json();
+    if (seq !== seqAtual) return;
     jobsCache = dados.jobs || [];
     renderizarFila();
   } catch (e) {
@@ -255,5 +265,6 @@ async function atualizarFila() {
 }
 
 carregarMotor();
-atualizarFila();
-setInterval(atualizarFila, POLL_MS);
+(function agendar() {
+  atualizarFila().finally(() => setTimeout(agendar, POLL_MS));
+})();
