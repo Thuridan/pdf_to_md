@@ -127,7 +127,7 @@ fileInput.addEventListener("change", () => {
 });
 
 downloadAllBtn.addEventListener("click", (e) => {
-  if (downloadAllBtn.hasAttribute("disabled")) e.preventDefault();
+  if (downloadAllBtn.getAttribute("aria-disabled") === "true") e.preventDefault();
 });
 
 // --- remocao de jobs --------------------------------------------------------
@@ -245,10 +245,17 @@ function renderizarFila() {
     ? `${contagens.processando} processando · ${contagens.na_fila} na fila · ${contagens.concluido} concluídos · ${contagens.erro} com erro`
     : "nenhum arquivo enviado ainda";
 
+  // `disabled` nao e atributo valido em <a> - o navegador o ignora, entao so
+  // funcionava por o CSS aplicar pointer-events:none e o JS interceptar o
+  // clique; leitores de tela continuavam anunciando o link como ativo.
+  // aria-disabled + remover href (sem destino, nao ha o que navegar) e o
+  // padrao acessivel para um link estilizado como botao desabilitavel.
   if (contagens.concluido > 0) {
-    downloadAllBtn.removeAttribute("disabled");
+    downloadAllBtn.setAttribute("aria-disabled", "false");
+    downloadAllBtn.setAttribute("href", "/api/download-zip");
   } else {
-    downloadAllBtn.setAttribute("disabled", "");
+    downloadAllBtn.setAttribute("aria-disabled", "true");
+    downloadAllBtn.removeAttribute("href");
   }
   clearDoneBtn.disabled = contagens.concluido + contagens.erro === 0;
 

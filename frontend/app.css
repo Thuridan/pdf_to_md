@@ -145,7 +145,7 @@ html[data-theme="dark"] .toggle-tema .icone-lua { display: block; }
   text-decoration: none; white-space: nowrap;
 }
 .botao-baixar-tudo svg { width: 15px; height: 15px; }
-.botao-baixar-tudo[disabled] {
+.botao-baixar-tudo[aria-disabled="true"] {
   pointer-events: none; opacity: 0.45; background: var(--border-strong); color: var(--text-faint);
 }
 

@@ -538,6 +538,19 @@ class TestEmpacotamento(unittest.TestCase):
         self.assertNotIn("v3.0", html)
         self.assertIn('id="app-version"', html)
 
+    def test_download_all_usa_aria_disabled_em_vez_de_disabled_no_a(self):
+        """BUG-18: `disabled` nao e atributo HTML valido em <a> - o navegador
+        o ignora (so funcionava via CSS pointer-events + JS interceptando o
+        clique), e leitores de tela continuavam anunciando o link como ativo."""
+        raiz = Path(__file__).resolve().parent / "frontend"
+        html = (raiz / "index.html").read_text(encoding="utf-8")
+        linha = next(l for l in html.splitlines() if 'id="download-all"' in l)
+        self.assertNotIn("disabled>", linha)
+        self.assertIn("aria-disabled", linha)
+
+        css = (raiz / "app.css").read_text(encoding="utf-8")
+        self.assertIn('.botao-baixar-tudo[aria-disabled="true"]', css)
+
     def test_frontend_nao_afirma_gpu_ou_docling_incondicionalmente(self):
         """BUG-17: badge/resumo/rodape do frontend diziam "Aguardando GPU" e
         "motor Docling" incondicionalmente, mesmo quando o motor real e
