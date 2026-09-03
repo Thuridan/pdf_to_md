@@ -7,6 +7,14 @@ cd "$DIR"
 
 HOST="${HOST:-0.0.0.0}"
 PORT="${PORT:-8000}"
+
+if [ "$HOST" != "127.0.0.1" ] && [ "$HOST" != "localhost" ] && [ "$HOST" != "::1" ]; then
+    echo "WARNING: HOST=$HOST - listening beyond loopback. There is no auth or" >&2
+    echo "         HTTPS; anyone who can reach this host/port on the network can" >&2
+    echo "         upload, list, download and delete files. Restrict access via" >&2
+    echo "         your firewall (ufw), or set HOST=127.0.0.1 to bind loopback-only." >&2
+fi
+
 RUN_DIR="$DIR/.run"
 PID_FILE="$RUN_DIR/uvicorn.pid"
 LOG_FILE="$RUN_DIR/uvicorn.log"
