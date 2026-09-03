@@ -225,8 +225,8 @@ def _processar(job_id: str) -> None:
     if job is None:
         return
 
-    job.status = "processando"
     job.iniciado_em = datetime.now(timezone.utc)
+    job.status = "processando"
     motor = motor_pool.obter_motor()
     cfg = motor_pool.obter_config()
     saida = job.caminho_pdf.with_suffix(".md")
@@ -234,8 +234,8 @@ def _processar(job_id: str) -> None:
     resultado = m.converter_arquivo(job.caminho_pdf, saida, motor, cfg)
     job.segundos = resultado.segundos
     if resultado.status == "ok":
-        job.status = "concluido"
         job.caminho_saida = resultado.saida
+        job.status = "concluido"
         _atualizar_estimativa(job)
     else:
         job.status = "erro"

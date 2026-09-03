@@ -190,6 +190,45 @@ class TestFilaSobreviveAErroInesperado(unittest.TestCase):
             self.assertTrue(jobs._worker_thread.is_alive())
 
 
+class TestOrdemDeAtribuicaoDoJob(_ComMotorStub):
+    """BUG-06: _processar() setava job.status ANTES do dado que o status
+    prometia (job.status = 'concluido' antes de job.caminho_saida = ...; o
+    mesmo padrao valia para 'processando' antes de job.iniciado_em). Uma
+    thread HTTP podia observar o status novo com o dado ainda None. A corrida
+    em si nao e deterministicamente reproduzivel (ver bugs.md) - este teste
+    faz o melhor esforco possivel sem sleep/instrumentacao em codigo de
+    producao: usa o atraso ja existente do motor stub de teste para dar
+    varias janelas de poll durante o processamento real."""
+
+    falha = False
+
+    def setUp(self):
+        super().setUp()
+        self.motor._atraso = 0.2
+
+    def test_status_nunca_e_observado_antes_do_dado_correspondente(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            job = jobs.criar_job("a.pdf", b"%PDF-1.4", diretorio=Path(tmp))
+            jobs.enfileirar(job.id)
+
+            violacoes = []
+            limite = time.monotonic() + 2.0
+            while time.monotonic() < limite:
+                status = job.status
+                if status == "processando" and job.iniciado_em is None:
+                    violacoes.append("processando sem iniciado_em")
+                if status == "concluido" and job.caminho_saida is None:
+                    violacoes.append("concluido sem caminho_saida")
+                if status == "concluido":
+                    break
+                time.sleep(0.005)
+            else:
+                self.fail("job nao concluiu dentro do timeout")
+
+            self.assertEqual(violacoes, [])
+            self.assertIsNotNone(job.caminho_saida)
+
+
 class TestFilaAtualizaProgresso(_ComMotorStub):
     """Step 5, ponta a ponta pelo worker real: paginas_totais e a media movel."""
 
