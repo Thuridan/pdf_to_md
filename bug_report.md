@@ -36,7 +36,7 @@
 | BUG-08 | P1 | VÁLIDO (reproduzido) | sim (documentado) | `7e728da` | 0 |
 | BUG-09 | P1 | VÁLIDO (confirmado por inspeção) | sim | `92f43da` | 0 |
 | BUG-10 | P1 | VÁLIDO (confirmado por inspeção) | **parcial** (decisão de produto) | `b62fc63` | 0 |
-| BUG-11 | P2 | VÁLIDO (reproduzido) | sim | `201719f` | 1 |
+| BUG-11 | P2 | VÁLIDO (não alcançável hoje) [ver Errata em bug_report-2.md] | sim | `201719f` | 1 |
 | BUG-12 | P2 | VÁLIDO (reproduzido) | sim | `891ee97` | 4 |
 | BUG-13 | P2 | VÁLIDO (reproduzido) | sim | `fbb43a4` | 2 |
 | BUG-14 | P2 | VÁLIDO (confirmado por inspeção) | sim | `bf6d207` | 0 |
@@ -46,13 +46,14 @@
 | BUG-18 | P3 | VÁLIDO (confirmado por inspeção) | sim | `7ae1bcd` | 1 |
 | BUG-19 | P3 | VÁLIDO (reproduzido) | sim | `6df1a45` | 1 |
 | BUG-20 | P3 | VÁLIDO (confirmado por inspeção) | sim | `25fd501` | 1 |
-| BUG-21 | P3 | VÁLIDO (reproduzido) | sim | `13a5fdc` | 1 |
+| BUG-21 | P3 | VÁLIDO (não alcançável hoje) [ver Errata em bug_report-2.md] | sim | `13a5fdc` | 1 |
 | BUG-22 | P3 | VÁLIDO (reproduzido) | sim | `c90a767` | 2 |
 | BUG-23 | P3 | VÁLIDO (confirmado por inspeção) | sim | `13cd9ff` | 1 |
 
-**Contagens:**
-- Válidos (reproduzidos): 15
+**Contagens (corrigidas por errata — ver `bug_report-2.md`, BUG-26):**
+- Válidos (reproduzidos): ~~15~~ **13**
 - Válidos (confirmados por inspeção): 8
+- Válidos (não alcançáveis hoje): **2** (BUG-11, BUG-21 — reclassificados; ver `bug_report-2.md`)
 - Inválidos: 0
 - Corrigidos: 23 de 23 (22 integralmente; BUG-10 parcialmente — ver Pendências)
 - Total de testes adicionados: **30** (11 em `test_pdf_to_md.py`, 19 em `backend/tests/`)
@@ -158,7 +159,15 @@
 
 ### BUG-11 — `pulado` reportado ao usuário como `erro`
 
-- **Estado:** VÁLIDO (reproduzido) · P2
+> **Errata (ver `bug_report-2.md`, BUG-26):** o estado abaixo foi
+> reclassificado de `VÁLIDO (reproduzido)` para `VÁLIDO (não alcançável
+> hoje)`. A validação chamou `_processar()` diretamente, de um jeito que
+> nenhum caminho real da aplicação invoca — não há endpoint de
+> retry/reenfileiramento hoje, então não é reprodução do bug em produção,
+> é demonstração de comportamento fora do fluxo. O texto de validação
+> abaixo já registrava isso corretamente; só a etiqueta estava errada.
+
+- **Estado:** VÁLIDO (não alcançável hoje) · P2
 - **Validação:** `jobs._processar(job.id)` chamado duas vezes seguidas pro mesmo job (simulando um reprocessamento hipotético) — 2ª chamada: `status == "erro"`, `mensagem_erro == "ja existe (use --overwrite)"` (mensagem que só faz sentido no contexto da CLI). Não há endpoint de retry/reenfileiramento na API pública hoje — o caminho só é alcançável chamando `_processar()` diretamente, o que é exatamente o que uma futura funcionalidade de retry (ou um bug de reenfileiramento duplicado) faria.
 - **Correção aplicada:** `backend/src/services/jobs.py` — `_processar()` trata `resultado.status in ("ok", "pulado")` como sucesso (`status = "concluido"`), mas só chama `_atualizar_estimativa()` quando `resultado.status == "ok"` — um resultado `"pulado"` tem `resultado.segundos == 0.0`, e alimentar isso na média móvel corromperia a estimativa de progresso das conversões reais.
 - **Validação da correção:** mesmo cenário — 2ª chamada: `status == "concluido"`, `mensagem_erro == ""`.
@@ -250,7 +259,16 @@
 
 ### BUG-21 — `/api/motor` devolve 500 quando o pool não foi inicializado
 
-- **Estado:** VÁLIDO (reproduzido) · P3
+> **Errata (ver `bug_report-2.md`, BUG-26):** o estado abaixo foi
+> reclassificado de `VÁLIDO (reproduzido)` para `VÁLIDO (não alcançável
+> hoje)`. `motor_pool.inicializar()` roda no `lifespan`, e ASGI garante
+> que o lifespan termina antes de qualquer request ser despachada — sob a
+> aplicação real rodando normalmente, `_motor` nunca é `None` quando uma
+> requisição HTTP chega em `/api/motor`. A validação exigiu resetar o
+> estado do módulo manualmente, um caminho que nenhum request real
+> percorre — mesmo padrão do BUG-11.
+
+- **Estado:** VÁLIDO (não alcançável hoje) · P3
 - **Validação:** `motor_pool._motor = None` + chamada direta a `api.motor()` → `RuntimeError` não tratada.
 - **Correção aplicada:** `backend/src/routes/api.py` — `motor()` captura `RuntimeError` e relança como `HTTPException(503, ...)`.
 - **Validação da correção:** mesmo cenário — `HTTPException(503, "motor_pool nao inicializado...")`.
