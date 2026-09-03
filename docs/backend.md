@@ -181,10 +181,18 @@ lógica por trás do `--jobs` ser ignorado para o motor `docling` na CLI (ver
 _SEGUNDOS_POR_PAGINA_PADRAO = 2.0
 _ALPHA_EMA = 0.3
 
-def _atualizar_estimativa(job):
+def _atualizar_estimativa(job: Job) -> None:
+    if not job.paginas_totais:
+        return
     observado = job.segundos / job.paginas_totais
     _segundos_por_pagina = _ALPHA_EMA * observado + (1 - _ALPHA_EMA) * _segundos_por_pagina
 ```
+
+`_processar()` só chama isso quando `resultado.status == "ok"` — um job
+`"pulado"` (saída já existia, ver `converter_arquivo`) também conta como
+concluído do ponto de vista do usuário, mas `resultado.segundos` nesse caso
+é `0.0`; alimentar isso na média móvel faria a estimativa de progresso
+convergir para "instantâneo", o que é falso para as conversões reais.
 
 Como o Docling não expõe um callback nativo por página, "página atual" de um
 job em andamento é uma projeção: `decorrido / segundos_por_pagina`, limitada

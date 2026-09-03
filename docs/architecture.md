@@ -97,7 +97,18 @@ inteira a cada resposta — não há WebSocket nem Server-Sent Events. Ver
   já que o gargalo é a inferência, não a orquestração.
 - **`JobStore`** é protegido por `threading.Lock`, pois é lido pelas rotas
   HTTP (thread do event loop / threadpool do Starlette) e escrito pela thread
-  worker.
+  worker — mas o lock protege o **dicionário** (`adicionar`/`obter`/
+  `remover`/`listar`/`remover_se_nao_processando`), não os campos de um
+  `Job` individual. `_processar()` muta `job.status`, `job.caminho_saida`
+  etc. diretamente, fora de qualquer lock. Isso não corrompe nada porque em
+  CPython a atribuição de um único atributo já é atômica (GIL), mas é uma
+  garantia mais fraca do que "toda leitura/escrita passa pelo lock" —
+  concretamente, significa que um leitor pode observar um `Job` em qualquer
+  ponto intermediário entre duas atribuições seguidas. Por isso a ordem de
+  atribuição dentro de `_processar()` importa (`status` é sempre a última
+  coisa setada, depois do dado que ele implica existir) e por isso
+  `remover_se_nao_processando()` existe como método dedicado do `JobStore`
+  em vez de um check-then-act em duas chamadas separadas.
 - **Sem fila externa** (Redis/Celery/RabbitMQ): a fila é um `queue.Queue` em
   memória porque o estado inteiro da aplicação já vive na memória de um único
   processo. Introduzir um broker externo resolveria um problema que não
@@ -127,7 +138,10 @@ scripts/restart.sh   # stop.sh seguido de start.sh
 
 - `HOST`/`PORT` configuráveis por variável de ambiente (padrão `0.0.0.0:8000`
   — escuta em todas as interfaces, incluindo a rede local; use
-  `HOST=127.0.0.1` para restringir a esta máquina).
+  `HOST=127.0.0.1` para restringir a esta máquina). `scripts/start.sh`
+  imprime um aviso visível em stderr sempre que `HOST` resolver para algo
+  além de loopback, nomeando a exposição — silencioso só com
+  `127.0.0.1`/`localhost`/`::1`.
 - PID e log ficam em `.run/` (gitignored) — não há supervisor de processo
   (systemd/supervisord); os scripts fazem esse papel de forma mínima.
 - `backend/uploads/` e `.run/` são gitignored: são estado de execução, não
