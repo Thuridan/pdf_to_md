@@ -4,6 +4,8 @@
 
 from __future__ import annotations
 
+import ast
+import inspect
 import queue
 import sys
 import tempfile
@@ -284,43 +286,78 @@ class TestFilaSobreviveAErroInesperado(unittest.TestCase):
             self.assertTrue(jobs._worker_thread.is_alive())
 
 
-class TestOrdemDeAtribuicaoDoJob(_ComMotorStub):
-    """BUG-06: _processar() setava job.status ANTES do dado que o status
-    prometia (job.status = 'concluido' antes de job.caminho_saida = ...; o
-    mesmo padrao valia para 'processando' antes de job.iniciado_em). Uma
-    thread HTTP podia observar o status novo com o dado ainda None. A corrida
-    em si nao e deterministicamente reproduzivel (ver bugs.md) - este teste
-    faz o melhor esforco possivel sem sleep/instrumentacao em codigo de
-    producao: usa o atraso ja existente do motor stub de teste para dar
-    varias janelas de poll durante o processamento real."""
+class TestOrdemDeAtribuicaoDoJob(unittest.TestCase):
+    """BUG-06 (correcao) / BUG-25 de bugs-2.md (teste): a corrida em si nao e
+    deterministicamente reproduzivel por execucao (ver bugs.md) - a primeira
+    versao deste teste tentava pegar a janela via polling num processamento
+    real com atraso artificial, mas o proprio bug_report.md admitiu que ela
+    "nao garante disparar a janela em toda execucao": um teste que passa com
+    ou sem o bug nao protege nada, so parece proteger.
 
-    falha = False
+    Verificacao estrutural em vez de comportamental: parseia a AST fonte de
+    _processar() e afirma, na ORDEM TEXTUAL das atribuicoes, que
+    job.iniciado_em vem antes de job.status="processando", e que
+    job.caminho_saida vem antes de job.status="concluido" dentro do mesmo
+    bloco if. Feio e acoplado a forma do codigo de proposito - falha de
+    verdade se alguem reverter a ordem (validado manualmente revertendo a
+    ordem em jobs.py, rodando este teste - falha -, e restaurando - volta a
+    passar; ver bug_report-2.md para a evidencia)."""
 
-    def setUp(self):
-        super().setUp()
-        self.motor._atraso = 0.2
+    @staticmethod
+    def _indice_de_atribuicao(corpo: list, atributo: str, valor: str | None = None) -> int:
+        """Indice (na lista de statements `corpo`, sem recursao) da primeira
+        atribuicao `job.<atributo> = ...`. Se `valor` for informado, exige
+        que o lado direito seja essa constante string exata (para distinguir
+        job.status="processando" de job.status="concluido", por exemplo)."""
+        for i, stmt in enumerate(corpo):
+            if not isinstance(stmt, ast.Assign) or len(stmt.targets) != 1:
+                continue
+            alvo = stmt.targets[0]
+            if not (
+                isinstance(alvo, ast.Attribute)
+                and isinstance(alvo.value, ast.Name)
+                and alvo.value.id == "job"
+                and alvo.attr == atributo
+            ):
+                continue
+            if valor is not None:
+                if not (isinstance(stmt.value, ast.Constant) and stmt.value.value == valor):
+                    continue
+            return i
+        raise AssertionError(
+            f"nenhuma atribuicao 'job.{atributo}"
+            f"{' = ' + repr(valor) if valor is not None else ''}' encontrada"
+        )
 
-    def test_status_nunca_e_observado_antes_do_dado_correspondente(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            job = jobs.criar_job("a.pdf", b"%PDF-1.4", diretorio=Path(tmp))
-            jobs.enfileirar(job.id)
+    def test_status_processando_vem_depois_de_iniciado_em(self):
+        arvore = ast.parse(inspect.getsource(jobs._processar))
+        corpo_funcao = arvore.body[0].body
 
-            violacoes = []
-            limite = time.monotonic() + 2.0
-            while time.monotonic() < limite:
-                status = job.status
-                if status == "processando" and job.iniciado_em is None:
-                    violacoes.append("processando sem iniciado_em")
-                if status == "concluido" and job.caminho_saida is None:
-                    violacoes.append("concluido sem caminho_saida")
-                if status == "concluido":
-                    break
-                time.sleep(0.005)
-            else:
-                self.fail("job nao concluiu dentro do timeout")
+        idx_iniciado_em = self._indice_de_atribuicao(corpo_funcao, "iniciado_em")
+        idx_status_processando = self._indice_de_atribuicao(corpo_funcao, "status", "processando")
 
-            self.assertEqual(violacoes, [])
-            self.assertIsNotNone(job.caminho_saida)
+        self.assertLess(
+            idx_iniciado_em, idx_status_processando,
+            "job.iniciado_em precisa ser atribuido ANTES de job.status='processando' - "
+            "leitores usam o status como sinal de que iniciado_em ja esta preenchido",
+        )
+
+    def test_status_concluido_vem_depois_de_caminho_saida(self):
+        arvore = ast.parse(inspect.getsource(jobs._processar))
+        corpo_funcao = arvore.body[0].body
+
+        # ha dois "if" no corpo da funcao: "if job is None: return" (sem
+        # else) e o if/else que decide sucesso vs erro (com else) - e este
+        # segundo que nos interessa.
+        bloco_if = next(stmt for stmt in corpo_funcao if isinstance(stmt, ast.If) and stmt.orelse)
+        idx_caminho_saida = self._indice_de_atribuicao(bloco_if.body, "caminho_saida")
+        idx_status_concluido = self._indice_de_atribuicao(bloco_if.body, "status", "concluido")
+
+        self.assertLess(
+            idx_caminho_saida, idx_status_concluido,
+            "job.caminho_saida precisa ser atribuido ANTES de job.status='concluido' - "
+            "leitores usam o status como sinal de que caminho_saida ja esta preenchido",
+        )
 
 
 class TestRemoverSeNaoProcessando(unittest.TestCase):
