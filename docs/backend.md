@@ -276,18 +276,35 @@ duplicaria os modelos em memória sem ganho real de throughput — a mesma
 lógica por trás do `--jobs` ser ignorado para o motor `docling` na CLI (ver
 [`code.md`](code.md#paralelismo-de-lote)).
 
-### Estimativa de progresso (EMA)
+### Estimativa de progresso (EMA por modo de OCR — rodada 3, TAREFA-5)
 
 ```python
 _SEGUNDOS_POR_PAGINA_PADRAO = 2.0
 _ALPHA_EMA = 0.3
+_segundos_por_pagina: dict[bool, float] = {True: 2.0, False: 2.0}
+_amostras_ema: dict[bool, int] = {True: 0, False: 0}
 
 def _atualizar_estimativa(job: Job) -> None:
     if not job.paginas_totais:
         return
     observado = job.segundos / job.paginas_totais
-    _segundos_por_pagina = _ALPHA_EMA * observado + (1 - _ALPHA_EMA) * _segundos_por_pagina
+    atual = _segundos_por_pagina[job.ocr]
+    _segundos_por_pagina[job.ocr] = _ALPHA_EMA * observado + (1 - _ALPHA_EMA) * atual
+    _amostras_ema[job.ocr] += 1
 ```
+
+**Por que por modo, não uma EMA global:** a TAREFA-4 (mesma rodada) deu ao
+motor Docling um `DocumentConverter` por modo de OCR justamente porque
+`do_ocr` muda o pipeline; o custo por página muda junto, em ordem de
+grandeza (rodar RapidOCR página a página é um trabalho fundamentalmente
+diferente de só extrair layout/tabelas). Uma EMA global misturando os dois
+não convergiria para nada útil para nenhum dos dois — ela ficaria oscilando
+entre "rápido" e "lento" conforme o mix de jobs recentes, exatamente o
+problema que motivou a TAREFA-5. As duas EMAs começam no mesmo palpite
+inicial (2 s/página): não havia, nesta rodada, uma medição própria por modo
+que justificasse valores iniciais diferentes sem calibrar no vazio — cada
+uma converge para a realidade da máquina assim que os primeiros jobs
+daquele modo terminam (ver `_AMOSTRAS_PARA_CONFIANCA`, abaixo).
 
 `_processar()` só chama isso quando `resultado.status == "ok"` — um job
 `"pulado"` (saída já existia, ver `converter_arquivo`) também conta como
@@ -296,15 +313,36 @@ concluído do ponto de vista do usuário, mas `resultado.segundos` nesse caso
 convergir para "instantâneo", o que é falso para as conversões reais.
 
 **Estimativa de duração total** (`Job.to_dict()["estimativa_segundos"]`,
-rodada 3): `paginas_totais × _segundos_por_pagina` — informação neutra,
+TAREFA-2, agora usando a EMA do **modo do próprio job** — TAREFA-5):
+`paginas_totais × _segundos_por_pagina[job.ocr]` — informação neutra,
 exposta sempre que o número de páginas é conhecido (não só durante
 `"processando"`), tanto em `GET /api/jobs` quanto na resposta de
-`POST /api/jobs`. `_amostras_ema` conta quantos jobs já alimentaram a EMA;
-abaixo de `_AMOSTRAS_PARA_CONFIANCA` (3), `estimativa_baixa_confianca` vai
-`true` — logo após subir o processo a EMA vale só o palpite inicial (2s/
-página) e não conhece a máquina. O *banner* de aviso na UI é condicional
-(acima de `AVISO_ESTIMATIVA_MINUTOS`, ver `dependencies.md`); a estimativa
-em si não é.
+`POST /api/jobs`. `_amostras_ema[job.ocr]` conta quantos jobs *daquele
+modo* já alimentaram a EMA; abaixo de `_AMOSTRAS_PARA_CONFIANCA` (3),
+`estimativa_baixa_confianca` vai `true` — logo após subir o processo (ou
+antes do primeiro job de um modo específico) a EMA daquele modo vale só o
+palpite inicial e não conhece a máquina. O *banner* de aviso na UI é
+condicional (acima de `AVISO_ESTIMATIVA_MINUTOS`, ver `dependencies.md`);
+a estimativa em si não é.
+
+**Decisão registrada (TAREFA-5 pedia para avaliar e registrar, não
+necessariamente implementar):** dentro de um job longo, `pagina_estimada`
+(`to_dict()`, projeção "página atual" de um job `"processando"`) é uma
+projeção linear pelo tempo decorrido (`decorrido / segundos_por_pagina`) —
+imprecisa num job de 90 minutos, mas visível só ali, não em jobs curtos.
+Usar "a taxa observada do próprio documento" em vez da EMA global/por-modo
+**não é implementável nesta rodada**: o Docling não expõe nenhum callback
+de progresso por página (`architecture.md`/`code.md` já documentam isso),
+então não existe nenhum sinal intermediário durante a conversão de UM job
+específico para calibrar contra — só temos a duração total, uma vez, no
+fim. A única melhoria de fato alcançável com o que o Docling expõe hoje é
+diferenciar por modo de OCR, que é exatamente o que esta tarefa já faz.
+Refinar mais (ex.: heurísticas por contagem de páginas/complexidade) seria
+especular sem dado real para calibrar — mesmo problema que motivou usar
+documentos reais, não sintéticos, para calibrar a detecção de OCR na
+TAREFA-3. Fica para uma rodada futura, condicionado a alguma fonte de sinal
+intermediário (ex.: se uma versão futura do Docling expuser callback por
+página).
 
 Como o Docling não expõe um callback nativo por página, "página atual" de um
 job em andamento é uma projeção: `decorrido / segundos_por_pagina`, limitada

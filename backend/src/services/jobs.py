@@ -35,14 +35,28 @@ _parar_evento = threading.Event()
 # "pagina atual" e uma projecao por tempo decorrido (elapsed / segundos_por_pagina).
 # A media movel comeca com um palpite razoavel e se ajusta a cada job concluido -
 # e so um proxy de UX, por isso a API sempre marca esse numero como "estimado".
+#
+# EMA POR MODO DE OCR (rodada 3, TAREFA-5): com OCR e sem OCR tem custo por
+# pagina em ordens de grandeza diferentes (TAREFA-4 deu ao motor Docling um
+# converter por modo justamente por causa dessa diferenca) - uma EMA global
+# unica mistura os dois e nao converge pra nada util pra nenhum dos dois.
+# Chave e o bool job.ocr (o modo EFETIVO, ja resolvido por deteccao ou
+# override - nao "automatico"/"sempre"/"nunca"). As duas comecam no MESMO
+# palpite inicial: nao ha medicao real desta rodada que justifique valores
+# iniciais diferentes por modo sem calibrar no vazio (ver relatorio) - cada
+# uma se ajusta pra sua propria realidade assim que os primeiros jobs
+# daquele modo terminam.
 _SEGUNDOS_POR_PAGINA_PADRAO = 2.0
 _ALPHA_EMA = 0.3
-_segundos_por_pagina = _SEGUNDOS_POR_PAGINA_PADRAO
-# Quantos jobs ja alimentaram a EMA - logo apos subir o processo ela vale so
-# o palpite inicial (2s/pagina) e nao conhece a maquina; abaixo deste limiar
+_segundos_por_pagina: dict[bool, float] = {
+    True: _SEGUNDOS_POR_PAGINA_PADRAO,
+    False: _SEGUNDOS_POR_PAGINA_PADRAO,
+}
+# Quantos jobs ja alimentaram a EMA de cada modo - logo apos subir o processo
+# ela vale so o palpite inicial e nao conhece a maquina; abaixo deste limiar
 # a estimativa derivada dela e marcada como baixa confianca (TAREFA-2).
 _AMOSTRAS_PARA_CONFIANCA = 3
-_amostras_ema = 0
+_amostras_ema: dict[bool, int] = {True: 0, False: 0}
 
 
 @dataclass
@@ -66,13 +80,18 @@ class Job:
     ocr_origem: str = "detectado"  # "detectado" | "forcado"
 
     def to_dict(self, *, posicao_na_fila: int | None = None) -> dict:
+        # EMA do MODO deste job especificamente (TAREFA-5) - OCR e sem-OCR
+        # tem custo por pagina em ordens de grandeza diferentes; misturar
+        # os dois numa unica media nao converge pra nada util pra nenhum.
+        segundos_por_pagina = _segundos_por_pagina[self.ocr]
+
         pagina_estimada: float | None = None
         estimado = False
 
         if self.status == "processando" and self.paginas_totais and self.iniciado_em:
             decorrido = (datetime.now(timezone.utc) - self.iniciado_em).total_seconds()
             pagina_estimada = min(
-                float(self.paginas_totais), decorrido / _segundos_por_pagina
+                float(self.paginas_totais), decorrido / segundos_por_pagina
             )
             estimado = True
         elif self.status == "concluido" and self.paginas_totais:
@@ -82,11 +101,11 @@ class Job:
         # exposta quando o numero de paginas e conhecido - e o frontend quem
         # decide onde exibi-la (na_fila/processando) e se aciona o banner de
         # aviso acima do limiar configuravel. "Baixa confianca" enquanto
-        # poucos jobs alimentaram a EMA - logo apos subir o processo ela
-        # vale so o palpite inicial e nao conhece a maquina.
+        # poucos jobs do MESMO MODO alimentaram a EMA - logo apos subir o
+        # processo ela vale so o palpite inicial e nao conhece a maquina.
         estimativa_segundos: float | None = None
         if self.paginas_totais:
-            estimativa_segundos = self.paginas_totais * _segundos_por_pagina
+            estimativa_segundos = self.paginas_totais * segundos_por_pagina
 
         dados = {
             "id": self.id,
@@ -98,7 +117,7 @@ class Job:
             "pagina_estimada": pagina_estimada,
             "estimado": estimado,
             "estimativa_segundos": estimativa_segundos,
-            "estimativa_baixa_confianca": _amostras_ema < _AMOSTRAS_PARA_CONFIANCA,
+            "estimativa_baixa_confianca": _amostras_ema[self.ocr] < _AMOSTRAS_PARA_CONFIANCA,
             "ocr": self.ocr,
             "ocr_origem": self.ocr_origem,
             "mensagem_erro": self.mensagem_erro or None,
@@ -312,13 +331,15 @@ def obter_com_progresso(job_id: str) -> dict | None:
 
 
 def _atualizar_estimativa(job: Job) -> None:
-    """Ajusta a media movel de segundos/pagina com o resultado de um job concluido."""
-    global _segundos_por_pagina, _amostras_ema
+    """Ajusta a media movel de segundos/pagina (do MODO de OCR deste job -
+    TAREFA-5) com o resultado de um job concluido. Muta os dicts em vez de
+    reatribuir os nomes do modulo - sem necessidade de `global` aqui."""
     if not job.paginas_totais:
         return
     observado = job.segundos / job.paginas_totais
-    _segundos_por_pagina = _ALPHA_EMA * observado + (1 - _ALPHA_EMA) * _segundos_por_pagina
-    _amostras_ema += 1
+    atual = _segundos_por_pagina[job.ocr]
+    _segundos_por_pagina[job.ocr] = _ALPHA_EMA * observado + (1 - _ALPHA_EMA) * atual
+    _amostras_ema[job.ocr] += 1
 
 
 def _processar(job_id: str) -> None:

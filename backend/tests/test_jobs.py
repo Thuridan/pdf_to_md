@@ -132,8 +132,10 @@ class _ComMotorStub(unittest.TestCase):
     def setUp(self):
         self._motor_original = motor_pool._motor
         self._cfg_original = motor_pool._cfg
-        self._ema_original = jobs._segundos_por_pagina
-        self._amostras_original = jobs._amostras_ema
+        # TAREFA-5: EMA/contador viraram dict por modo de ocr - .copy() ao
+        # salvar, senao "original" e o MESMO dict que os testes mutam.
+        self._ema_original = jobs._segundos_por_pagina.copy()
+        self._amostras_original = jobs._amostras_ema.copy()
         self.motor = _MotorDeTeste(falha=self.falha)
         motor_pool._motor = self.motor
         motor_pool._cfg = m.Config()
@@ -570,10 +572,12 @@ class TestCriarJobDecisaoOcr(unittest.TestCase):
 
 class TestProgressoDict(unittest.TestCase):
     def setUp(self):
-        self._ema_original = jobs._segundos_por_pagina
-        self._amostras_original = jobs._amostras_ema
-        jobs._segundos_por_pagina = 2.0
-        jobs._amostras_ema = 0
+        self._ema_original = jobs._segundos_por_pagina.copy()
+        self._amostras_original = jobs._amostras_ema.copy()
+        jobs._segundos_por_pagina[True] = 2.0
+        jobs._segundos_por_pagina[False] = 2.0
+        jobs._amostras_ema[True] = 0
+        jobs._amostras_ema[False] = 0
 
     def tearDown(self):
         jobs._segundos_por_pagina = self._ema_original
@@ -607,11 +611,31 @@ class TestProgressoDict(unittest.TestCase):
     def test_estimativa_baixa_confianca_antes_de_3_amostras(self):
         job = jobs.Job(id="1", nome_original="a.pdf", caminho_pdf=Path("a.pdf"), paginas_totais=10)
 
-        jobs._amostras_ema = 2
+        jobs._amostras_ema[True] = 2
         self.assertTrue(job.to_dict()["estimativa_baixa_confianca"])
 
-        jobs._amostras_ema = 3
+        jobs._amostras_ema[True] = 3
         self.assertFalse(job.to_dict()["estimativa_baixa_confianca"])
+
+    def test_ema_e_independente_por_modo_de_ocr(self):
+        """TAREFA-5: com OCR e sem OCR tem custo por pagina em ordens de
+        grandeza diferentes - misturar os dois numa EMA global nao converge
+        pra nada util pra nenhum. Cada modo tem a sua."""
+        jobs._segundos_por_pagina[True] = 30.0   # com ocr: bem mais lento
+        jobs._segundos_por_pagina[False] = 1.0   # sem ocr: rapido
+        jobs._amostras_ema[True] = 5
+        jobs._amostras_ema[False] = 5
+
+        job_com_ocr = jobs.Job(
+            id="1", nome_original="a.pdf", caminho_pdf=Path("a.pdf"),
+            paginas_totais=10, ocr=True,
+        )
+        job_sem_ocr = jobs.Job(
+            id="2", nome_original="b.pdf", caminho_pdf=Path("b.pdf"),
+            paginas_totais=10, ocr=False,
+        )
+        self.assertEqual(job_com_ocr.to_dict()["estimativa_segundos"], 300.0)
+        self.assertEqual(job_sem_ocr.to_dict()["estimativa_segundos"], 10.0)
 
     def test_processando_estima_pagina_por_tempo_decorrido(self):
         agora = datetime.now(timezone.utc)
@@ -655,32 +679,33 @@ class TestProgressoDict(unittest.TestCase):
 
 class TestAtualizarEstimativa(unittest.TestCase):
     def setUp(self):
-        self._ema_original = jobs._segundos_por_pagina
-        self._amostras_original = jobs._amostras_ema
-        jobs._amostras_ema = 0
+        self._ema_original = jobs._segundos_por_pagina.copy()
+        self._amostras_original = jobs._amostras_ema.copy()
+        jobs._amostras_ema[True] = 0
+        jobs._amostras_ema[False] = 0
 
     def tearDown(self):
         jobs._segundos_por_pagina = self._ema_original
         jobs._amostras_ema = self._amostras_original
 
     def test_media_movel_se_aproxima_do_tempo_observado(self):
-        jobs._segundos_por_pagina = 2.0
+        jobs._segundos_por_pagina[True] = 2.0
         job = jobs.Job(
             id="1", nome_original="a.pdf", caminho_pdf=Path("a.pdf"),
-            paginas_totais=10, segundos=10.0,  # 1s/pagina observado
+            paginas_totais=10, segundos=10.0, ocr=True,  # 1s/pagina observado
         )
         jobs._atualizar_estimativa(job)
         # alpha=0.3: nova = 0.3*1.0 + 0.7*2.0 = 1.7
-        self.assertAlmostEqual(jobs._segundos_por_pagina, 1.7, places=4)
+        self.assertAlmostEqual(jobs._segundos_por_pagina[True], 1.7, places=4)
 
     def test_sem_paginas_totais_nao_altera_a_media(self):
-        jobs._segundos_por_pagina = 2.0
+        jobs._segundos_por_pagina[True] = 2.0
         job = jobs.Job(
             id="1", nome_original="a.pdf", caminho_pdf=Path("a.pdf"),
-            paginas_totais=None, segundos=5.0,
+            paginas_totais=None, segundos=5.0, ocr=True,
         )
         jobs._atualizar_estimativa(job)
-        self.assertEqual(jobs._segundos_por_pagina, 2.0)
+        self.assertEqual(jobs._segundos_por_pagina[True], 2.0)
 
     def test_amostras_ema_incrementa_so_com_paginas_totais(self):
         """TAREFA-2: a estimativa e marcada 'baixa confianca' enquanto
@@ -688,18 +713,35 @@ class TestAtualizarEstimativa(unittest.TestCase):
         media de fato mudou."""
         job_com_paginas = jobs.Job(
             id="1", nome_original="a.pdf", caminho_pdf=Path("a.pdf"),
-            paginas_totais=10, segundos=10.0,
+            paginas_totais=10, segundos=10.0, ocr=True,
         )
         job_sem_paginas = jobs.Job(
             id="2", nome_original="b.pdf", caminho_pdf=Path("b.pdf"),
-            paginas_totais=None, segundos=5.0,
+            paginas_totais=None, segundos=5.0, ocr=True,
         )
         jobs._atualizar_estimativa(job_sem_paginas)
-        self.assertEqual(jobs._amostras_ema, 0)
+        self.assertEqual(jobs._amostras_ema[True], 0)
         jobs._atualizar_estimativa(job_com_paginas)
-        self.assertEqual(jobs._amostras_ema, 1)
+        self.assertEqual(jobs._amostras_ema[True], 1)
         jobs._atualizar_estimativa(job_com_paginas)
-        self.assertEqual(jobs._amostras_ema, 2)
+        self.assertEqual(jobs._amostras_ema[True], 2)
+
+    def test_atualizar_um_modo_nao_afeta_o_outro(self):
+        """TAREFA-5: a EMA e o contador sao por modo de OCR - um job com OCR
+        nao deve mexer na media/contador do modo sem OCR, e vice-versa."""
+        jobs._segundos_por_pagina[True] = 2.0
+        jobs._segundos_por_pagina[False] = 2.0
+
+        job_com_ocr = jobs.Job(
+            id="1", nome_original="a.pdf", caminho_pdf=Path("a.pdf"),
+            paginas_totais=10, segundos=100.0, ocr=True,  # 10s/pagina observado
+        )
+        jobs._atualizar_estimativa(job_com_ocr)
+
+        self.assertNotEqual(jobs._segundos_por_pagina[True], 2.0)
+        self.assertEqual(jobs._segundos_por_pagina[False], 2.0, "modo sem ocr nao deveria mudar")
+        self.assertEqual(jobs._amostras_ema[True], 1)
+        self.assertEqual(jobs._amostras_ema[False], 0, "contador do outro modo nao deveria andar")
 
 
 class TestPosicaoNaFila(unittest.TestCase):
