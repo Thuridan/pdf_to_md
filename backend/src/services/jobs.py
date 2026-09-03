@@ -260,6 +260,70 @@ def enfileirar(job_id: str) -> None:
     _fila.put(job_id)
 
 
+def retomar_jobs_do_disco(*, diretorio: Path | None = None) -> tuple[int, int]:
+    """Varre uploads/ no startup e reconstitui jobs 'concluido' para pares
+    {job_id}.pdf + {job_id}.md ja existentes (rodada 5, TAREFA-4).
+
+    Sem isso, o processo cair no meio de uma fila perde tudo da memoria: os
+    .md ja gerados ficam orfaos no disco, sem nenhum job apontando pra eles
+    - o usuario nao consegue mais baixa-los pela UI, mesmo com o arquivo
+    pronto ali. So reconstitui jobs TERMINADOS (par completo); um .pdf SEM
+    .md correspondente fica de fora, sem reenfileirar automaticamente - nao
+    ha como saber se ele parou por falha de conversao ou por interrupcao no
+    meio do processamento, e reprocessar as cegas arriscaria repetir uma
+    falha ou desperdicar tempo num arquivo problematico. So conta e loga
+    esses casos; quem decide o que fazer com eles e o usuario. Varredura
+    por idade (limpar uploads antigos) fica pra rodada de isolamento - nao
+    antecipada aqui.
+
+    Limitacao registrada: nome_original nao e recuperavel do disco (o
+    upload e gravado como {job_id}.pdf, sem metadados ao lado) - o job
+    retomado usa o proprio nome de arquivo (job_id.pdf) como nome exibido.
+    Mesma razao para ocr/ocr_origem: a decisao de OCR efetiva de quando o
+    job rodou originalmente nao fica gravada em lugar nenhum, entao
+    ocr_origem vira "desconhecido" em vez de inventar um valor (a UI trata
+    esse caso suprimindo o rotulo de OCR, em vez de mostrar algo incerto
+    como se fosse fato).
+
+    Devolve (retomados, orfaos) para o chamador (lifespan do FastAPI) logar.
+    """
+    alvo = diretorio or DIR_UPLOADS
+    if not alvo.is_dir():
+        return 0, 0
+
+    retomados = 0
+    orfaos = 0
+    for caminho_pdf in sorted(alvo.glob("*.pdf")):
+        caminho_md = caminho_pdf.with_suffix(".md")
+        if not caminho_md.is_file():
+            orfaos += 1
+            continue
+        try:
+            paginas = m.contar_paginas(caminho_pdf)
+        except m.PdfIlegivel:
+            paginas = None
+        job = Job(
+            id=caminho_pdf.stem,
+            nome_original=caminho_pdf.name,
+            caminho_pdf=caminho_pdf,
+            status="concluido",
+            caminho_saida=caminho_md,
+            paginas_totais=paginas,
+            tamanho_bytes=caminho_pdf.stat().st_size,
+            ocr_origem="desconhecido",
+        )
+        _store.adicionar(job)
+        retomados += 1
+
+    if retomados or orfaos:
+        LOG.info(
+            "Retomada de jobs no startup: %d concluido(s) reconstituido(s) de "
+            "%s, %d PDF(s) orfao(s) sem .md correspondente (nao reenfileirados).",
+            retomados, alvo, orfaos,
+        )
+    return retomados, orfaos
+
+
 def jobs_concluidos(ids: list[str] | None = None) -> list[Job]:
     """Jobs com status 'concluido' (e saida gravada), em ordem de criacao.
 

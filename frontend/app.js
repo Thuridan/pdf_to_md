@@ -197,8 +197,12 @@ const ICONE_LIXEIRA =
 // --- renderizacao da fila ---------------------------------------------------
 // "OCR: sim (detectado)" / "OCR: não (forçado)" - a decisao efetiva e sua
 // origem, auditavel quando o resultado sair pior que o esperado (TAREFA-3).
+// "desconhecido" (rodada 5, TAREFA-4): job retomado de uma execucao
+// anterior apos um restart - a decisao de OCR original nao ficou gravada
+// em lugar nenhum, entao o rotulo e suprimido em vez de mostrar um valor
+// inventado como se fosse fato.
 function rotuloOcr(job) {
-  if (job.ocr_origem == null) return null;
+  if (job.ocr_origem == null || job.ocr_origem === "desconhecido") return null;
   const origem = job.ocr_origem === "forcado" ? "forçado" : "detectado";
   return `OCR: ${job.ocr ? "sim" : "não"} (${origem})`;
 }

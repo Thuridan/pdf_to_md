@@ -316,6 +316,40 @@ Medido no mesmo extrato real de 46 páginas: grau do documento
 documento (nativo, texto rico) e útil como prova de que o sinal distingue
 páginas de fato: as outras 45 páginas ficaram `excellent`/`good`.
 
+### Retomada de jobs no startup (rodada 5, TAREFA-4)
+
+A fila de jobs vive só em memória (`JobStore`) — se o processo cai no meio
+de um lote, a fila some, mas os `.md` já gerados continuam no disco em
+`uploads/`, sem nenhum job apontando para eles. `jobs.retomar_jobs_do_disco()`
+roda no `lifespan()` do FastAPI, **antes** de `iniciar_worker()`: varre
+`uploads/*.pdf` e reconstitui um `Job` com `status="concluido"` para todo
+par `{job_id}.pdf` + `{job_id}.md` já completo.
+
+Um `.pdf` **sem** `.md` correspondente fica de fora, deliberadamente — não
+tem como saber se ele parou por falha de conversão ou por interrupção no
+meio do processamento, e reenfileirar às cegas arriscaria repetir uma
+falha ou gastar tempo num arquivo problemático. Só é contado e logado
+("N concluído(s) reconstituído(s), M órfão(s) sem `.md`"); decidir o que
+fazer com os órfãos fica com o usuário. Varredura por idade (limpar
+uploads velhos) fica para a rodada de isolamento — não antecipada aqui.
+
+**Limitações registradas, por não haver metadados persistidos ao lado do
+PDF:**
+- `nome_original` não é recuperável (o upload é gravado como
+  `{job_id}.pdf`, sem nada além disso) — o job retomado usa o próprio
+  nome do arquivo em disco como nome exibido.
+- `ocr_origem` vira `"desconhecido"` em vez de um valor inventado — a
+  decisão de OCR efetiva da execução original não fica gravada em lugar
+  nenhum. O frontend trata esse valor suprimindo o rótulo de OCR na linha
+  do job, em vez de mostrar `"detectado"`/`"forçado"` como se fosse fato
+  quando não é.
+
+Persistir um `.json` de metadados ao lado do PDF resolveria os dois, mas é
+mudança maior (grava e lê um arquivo extra por job, formato para manter
+compatível) — avaliado e descartado para esta rodada por ser
+desproporcional ao problema que motivou a tarefa; fica registrado aqui
+como opção futura se as limitações acima incomodarem na prática.
+
 ### Convenção de erros
 
 - **`404`** — recurso (job) não existe no `JobStore`.

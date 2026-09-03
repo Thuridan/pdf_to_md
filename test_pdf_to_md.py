@@ -901,6 +901,13 @@ class TestEmpacotamento(unittest.TestCase):
         self.assertIn("modo_ocr", js)  # enviado no FormData do upload
         self.assertIn("rotuloOcr", js)
 
+    def test_frontend_suprime_rotulo_de_ocr_desconhecido(self):
+        """Rodada 5, TAREFA-4: job retomado apos restart nao tem a decisao
+        de OCR original gravada - o rotulo e suprimido, nao inventado."""
+        raiz = Path(__file__).resolve().parent / "frontend"
+        js = (raiz / "app.js").read_text(encoding="utf-8")
+        self.assertIn('"desconhecido"', js)
+
     def test_frontend_exibe_grau_de_confianca(self):
         """Rodada 5, TAREFA-3: a linha do job mostra o grau (nao os
         escores numericos), e o detalhe lista as paginas com grau baixo."""

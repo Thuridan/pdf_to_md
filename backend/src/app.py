@@ -46,6 +46,12 @@ async def lifespan(app: FastAPI):
             "`pip install '.[docling]'` ou `pip install '.[simples]'`."
         )
         raise
+    # Retoma jobs concluidos de uma execucao anterior (rodada 5, TAREFA-4)
+    # ANTES de abrir o worker/aceitar requisicoes - senao uma corrida rara
+    # entre um upload novo e a varredura poderia, em teoria, colidir num
+    # job_id (uuid4, praticamente impossivel na pratica, mas a ordem aqui e
+    # de graca).
+    jobs.retomar_jobs_do_disco()
     jobs.iniciar_worker()
     try:
         yield

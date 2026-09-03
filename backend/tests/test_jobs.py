@@ -909,5 +909,57 @@ class TestRemover(unittest.TestCase):
         self.assertEqual(ids_restantes, {na_fila.id, processando.id})
 
 
+class TestRetomarJobsDoDisco(unittest.TestCase):
+    """Rodada 5, TAREFA-4: reconstitui jobs 'concluido' a partir de pares
+    {job_id}.pdf + {job_id}.md ja existentes em disco no startup."""
+
+    def setUp(self):
+        self._tmp_ctx = tempfile.TemporaryDirectory()
+        self._tmp = Path(self._tmp_ctx.name)
+        self._store_original = jobs._store
+        jobs._store = jobs.JobStore()
+
+    def tearDown(self):
+        jobs._store = self._store_original
+        self._tmp_ctx.cleanup()
+
+    def _par(self, job_id: str, *, com_md: bool = True) -> None:
+        (self._tmp / f"{job_id}.pdf").write_bytes(b"%PDF-1.4")
+        if com_md:
+            (self._tmp / f"{job_id}.md").write_text("# ok\n", encoding="utf-8")
+
+    def test_diretorio_inexistente_nao_falha(self):
+        retomados, orfaos = jobs.retomar_jobs_do_disco(diretorio=self._tmp / "nao-existe")
+        self.assertEqual((retomados, orfaos), (0, 0))
+        self.assertEqual(jobs.obter_store().listar(), [])
+
+    def test_par_completo_vira_job_concluido(self):
+        self._par("abc123")
+        retomados, orfaos = jobs.retomar_jobs_do_disco(diretorio=self._tmp)
+        self.assertEqual((retomados, orfaos), (1, 0))
+
+        job = jobs.obter_store().obter("abc123")
+        self.assertIsNotNone(job)
+        self.assertEqual(job.status, "concluido")
+        self.assertEqual(job.caminho_saida, self._tmp / "abc123.md")
+        self.assertEqual(job.nome_original, "abc123.pdf")
+        self.assertEqual(job.ocr_origem, "desconhecido")
+
+    def test_pdf_sem_md_nao_e_reenfileirado(self):
+        self._par("orfao", com_md=False)
+        retomados, orfaos = jobs.retomar_jobs_do_disco(diretorio=self._tmp)
+        self.assertEqual((retomados, orfaos), (0, 1))
+        self.assertIsNone(jobs.obter_store().obter("orfao"))
+
+    def test_mistura_conta_os_dois_grupos_separadamente(self):
+        self._par("completo1")
+        self._par("completo2")
+        self._par("orfao1", com_md=False)
+        retomados, orfaos = jobs.retomar_jobs_do_disco(diretorio=self._tmp)
+        self.assertEqual((retomados, orfaos), (2, 1))
+        ids = {j.id for j in jobs.obter_store().listar()}
+        self.assertEqual(ids, {"completo1", "completo2"})
+
+
 if __name__ == "__main__":
     unittest.main()

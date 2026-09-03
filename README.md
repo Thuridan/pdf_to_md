@@ -269,6 +269,16 @@ geral, e sinaliza as páginas com grau baixo (`poor`/`fair`) para revisão
 manual. Não é erro: a conversão continua utilizável mesmo com grau baixo,
 é só um sinal de qualidade que hoje fica invisível no `.md` puro.
 
+## Retomada de jobs após restart
+
+A fila vive só em memória. Se o processo cair no meio de um lote, um
+restart reconstitui como `concluído` todo job cujo `.pdf` e `.md` já
+existem juntos em `uploads/` — sem isso, esses arquivos ficavam órfãos no
+disco, prontos mas sem nenhum job para baixá-los pela UI. Um `.pdf` sem
+`.md` correspondente não é reenfileirado automaticamente (não dá para
+saber se ele parou por falha ou por interrupção); fica de fora, contado no
+log de inicialização.
+
 ## Marcadores de página
 
 Todo `.md` gerado (pelos dois motores) traz `<!-- página N -->` no início
