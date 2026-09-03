@@ -72,7 +72,14 @@ def health() -> dict:
 
 @router.get("/api/motor")
 def motor() -> dict:
-    return {"engine": motor_pool.obter_motor().nome}
+    try:
+        return {"engine": motor_pool.obter_motor().nome}
+    except RuntimeError as exc:
+        # motor_pool.obter_motor() levanta RuntimeError se inicializar()
+        # ainda nao rodou (nao deveria acontecer com o lifespan normal do
+        # app, mas e um erro diagnosticavel do cliente, nao uma falha
+        # interna inesperada - 503 (servico ainda nao pronto), nao 500.
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @router.post("/api/jobs")

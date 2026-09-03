@@ -35,6 +35,23 @@ class TestApp(unittest.TestCase):
         self.assertEqual(resposta.status_code, 200)
         self.assertIn(resposta.json()["engine"], ("docling", "simples"))
 
+    def test_motor_devolve_503_se_pool_nao_inicializado(self):
+        """BUG-21: motor_pool.obter_motor() levanta RuntimeError se
+        inicializar() nao rodou - a rota nao tratava isso, virando 500."""
+        with TestClient(app) as cliente:
+            # o lifespan (dentro do "with" acima) ja chamou inicializar();
+            # desfaz isso DEPOIS, simulando o pool nunca ter sido preenchido.
+            motor_original = motor_pool._motor
+            cfg_original = motor_pool._cfg
+            motor_pool._motor = None
+            motor_pool._cfg = None
+            try:
+                resposta = cliente.get("/api/motor")
+                self.assertEqual(resposta.status_code, 503)
+            finally:
+                motor_pool._motor = motor_original
+                motor_pool._cfg = cfg_original
+
     def test_raiz_serve_o_frontend_estatico(self):
         with TestClient(app) as cliente:
             resposta = cliente.get("/")
