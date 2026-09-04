@@ -275,6 +275,55 @@ estado entre conversões, não só custo por lote dentro de uma conversão).
 `Config`/CLI — a regra da rodada é só implementar o que a medição mostra
 ganho, e não houve ganho medido aqui.
 
+### `Config.threads` está estrangulando a conversão? (rodada 6, TAREFA-4)
+
+**Medido, padrão MANTIDO em 4 — o ganho de tempo é real, mas o par
+tempo/memória não compensa para o processo de vida longa.** A máquina tem
+64 núcleos (`len(os.sched_getaffinity(0))`, sem teto de cgroup) e a
+conversão observada usava só ~15% de CPU com `threads=4` — um valor
+escolhido pensando num desktop, não neste servidor.
+
+**Método:** mesma faixa de 46 páginas com OCR, `threads` em 4 (padrão), 8,
+16, 32 e 64, medindo tempo total e pico de RSS via `/usr/bin/time -v`
+(processo rodando sob `scripts/rodar_com_limite_memoria.sh -m 55G`, ver
+TAREFA-6, como rede de segurança).
+
+| `threads` | Tempo total | Pico de RSS | Observação |
+|---|---|---|---|
+| 4 (padrão) | 159,4 s | 46,55 GB | — |
+| 8 | (abortado aos 50,4s) | **58,10 GB** (e subindo) | matou a rede de segurança de 55 GB antes de terminar |
+| 16 | (abortado aos 31,8s) | **58,09 GB** (e subindo) | idem |
+| 32 | 23,5 s | 57,90 GB | terminou normalmente |
+| 64 | 23,5 s | 57,88 GB | terminou normalmente, **sem ganho sobre 32** |
+
+**O padrão não é gradual, é um degrau.** Qualquer valor de `threads` acima
+de 4 (8, 16, 32 ou 64) empurra o pico para a mesma faixa de ~58 GB — não há
+uma curva suave onde mais threads custam proporcionalmente mais RSS; o
+custo salta assim que a paralelização intra-operador é ativada (mais
+provável: pools de threads internos do onnxruntime/RapidOCR ou do backend
+de layout do PyTorch, não N arenas de malloc crescendo linearmente com
+`threads`). 32 e 64 dão o mesmo tempo (23,5s) e o mesmo pico — 64 não
+compra nada sobre 32.
+
+**Por que o padrão não sobe, apesar do ganho de tempo ser real (até 6,8×
+mais rápido):** a TAREFA-2 desta mesma rodada mostrou que o patamar de RSS
+**cresce a cada job** no mesmo processo (servidor de vida longa). Hoje,
+com `threads=4`, um job pesado usa ~46,6 GB de 62 GiB — sobra ~25% de
+margem para o crescimento entre jobs que a TAREFA-2 documentou. Com
+`threads` acima de 4, um único job já consome ~58 GB (~93% da máquina) —
+**não sobra margem nenhuma** para o próximo job crescer antes de um OOM
+real. O critério de escolha, como o prompt pediu, é o par tempo/RSS, não só
+o tempo: aqui o par diz que o ganho de latência de um job isolado não vale
+o risco de OOM apertado num processo que processa vários jobs em
+sequência.
+
+**Decisão:** `Config.threads` continua com padrão 4, **configurável** via
+`--threads` (já era) — quem converte um documento isolado pela CLI, sabe
+que a máquina tem folga e quer o resultado mais rápido, pode escolher 32
+conscientemente. O padrão do processo compartilhado (motor_pool/backend)
+não muda, porque ele é quem sofre o crescimento entre jobs medido na
+TAREFA-2.
+
 ## Persistência (ou a ausência dela)
 
 Não há banco de dados. O estado de um job é:
