@@ -442,6 +442,48 @@ presentes e buscáveis.
 deste achado, e a rodada de memória/qualidade seguinte para decidir se
 `traverse_pictures=True` vira o padrão do projeto.
 
+### `traverse_pictures`: proporção do texto de figura sob `PictureItem` (rodada 6, TAREFA-1)
+
+**Medição e registro — `traverse_pictures` continua desligado por padrão.**
+A rodada 5 (TAREFA-5, acima) achou que `export_to_markdown(traverse_pictures=True)`
+recupera texto nas páginas 61 e 91. Mas a rodada 4 já tinha registrado texto
+recuperado de **outras** capturas na mesma faixa de 46 páginas (diálogo de
+busca, árvores de checkbox, parágrafo de perfil de administrador) **sem**
+esse parâmetro — as duas coisas juntas pareciam contraditórias.
+
+**Não são.** Inspecionando a árvore do `DoclingDocument` (`doc.iterate_items
+(traverse_pictures=True)`, checando se o `parent` de cada item de texto
+resolve para um `PictureItem`) na mesma faixa de 46 páginas: o modelo de
+layout classifica algumas regiões de OCR como texto de página normal
+(`FORA_DE_PICTURE` — sempre serializado, com ou sem o parâmetro) e outras
+como filhos de um `PictureItem` (`SOB_PICTURE` — só serializado com
+`traverse_pictures=True`). Os termos da rodada 4 ("Global Find", "PDF
+Summary Reports", "User Activity Report", "Application Statistics",
+"Threat Log", "Admin Role Profile") saem quase todos como `FORA_DE_PICTURE`;
+os termos da rodada 5 (`scp_admin`, `password-complexity`, `update-server`,
+"Max Rows in CSV Export", `corp-syslog`) saem como `SOB_PICTURE`.
+
+**A classificação é por região, não por documento nem por captura.** O
+mesmo termo pode aparecer nas duas categorias em páginas diferentes — por
+exemplo "Global Find" aparece 13× como `FORA_DE_PICTURE` e 2× como
+`SOB_PICTURE`; "scp_admin" aparece 9× como `FORA_DE_PICTURE` e 5× como
+`SOB_PICTURE`. Isso confirma a hipótese da rodada 6: `traverse_pictures`
+não é uma chave universal para "recupera texto de captura" — o efeito
+varia por região dentro do mesmo documento, dependendo de como o modelo de
+layout classificou aquele bloco específico.
+
+**Proporção medida** (mesma faixa de 46 páginas, 65 `PictureItem` no total):
+1.105 itens de texto (12.327 caracteres) ficam sob algum `PictureItem` —
+**15,49%** dos caracteres de texto reconhecido na faixa, contra 564 itens
+(67.259 caracteres, 84,51%) como texto de página direto.
+
+**Decisão:** não implementado — a proporção (15,49%) não é desprezível, mas
+também não justifica ligar `traverse_pictures=True` como padrão sem antes
+avaliar se ele introduz duplicação em documentos onde o texto de página E o
+texto de figura descrevem a mesma região (ressalva já registrada na rodada
+5). Fica para uma rodada futura de qualidade decidir se vira padrão ou
+opção exposta.
+
 ### Achatamento de spans em tabelas no Markdown (rodada 5, TAREFA-8)
 
 **Medição e registro — nenhuma mudança no formato de saída.** Markdown não
