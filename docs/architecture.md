@@ -526,3 +526,76 @@ material de entrada para o usuário decidir depois, com base em dados
 verificados (não nas descrições da origem da rodada) e considerando que a
 motivação original (`SHARE_MODELS` resolveria o custo de memória) só se
 sustenta parcialmente.
+
+### Particionar documentos grandes em faixas (avaliado, rodada 6, TAREFA-7)
+
+**Avaliação e registro — não implementado.** Se o pico é dominado por
+conteúdo e não por tamanho do documento (Bloco A desta rodada), converter
+um manual em faixas de N páginas e concatenar o resultado poderia limitar o
+pico sem trocar de motor — o `page_range` do Docling já dá o mecanismo, e a
+numeração de página (rodada 5, TAREFA-1) já resolve a continuidade de
+numeração entre faixas.
+
+**Teste real:** 100 páginas de `teste.pdf` (300-399, sem OCR, mesmo motor
+reaproveitado via `motor_pool` em ambos os casos) convertidas de uma vez
+versus em duas faixas de 50 páginas em sequência:
+
+| Configuração | Tempo total | Pico de RSS | Caracteres de saída |
+|---|---|---|---|
+| 100 páginas, 1 job | 226,3 s | 17,55 GB | 192.063 |
+| 2×50 páginas, jobs sequenciais | 233,5 s | **28,10 GB** | 192.048 |
+
+**Achado contra-intuitivo: particionar PIOROU o pico, não melhorou.** Sem
+`malloc_trim` entre as duas metades (o teste rodou antes desse paliativo
+ser aplicado ao fluxo), o segundo job de 50 páginas herda o patamar
+elevado deixado pelo primeiro — exatamente o crescimento entre jobs que a
+TAREFA-2 mediu. O resultado é um pico MAIOR que processar as 100 páginas
+de uma vez só (28,1 GB vs. 17,55 GB), e um tempo total ligeiramente maior
+(duas cargas de modelo/limpeza de lote em vez de uma só). A contagem de
+caracteres bate (192.048 vs. 192.063, diferença desprezível de
+formatação de borda entre faixas) — confirma que nada foi duplicado ou
+perdido na emenda.
+
+**A conclusão muda com `malloc_trim` (TAREFA-5) entre as faixas** — nesse
+caso o segundo job partiria de um patamar baixo (~1,5 GB, medido na
+TAREFA-5) em vez de herdar o pico do primeiro, e aí sim particionar
+tenderia a limitar o pico por faixa. Isso não foi testado nesta rodada
+(o teste acima antecede a TAREFA-5 na ordem de execução); fica registrado
+como a forma certa de testar a hipótese original, numa rodada futura.
+
+**O que se perde ao particionar:**
+1. **Continuidade de tabela na fronteira do corte** — se uma tabela
+   atravessa o limite de uma faixa, cada metade vira uma tabela markdown
+   independente na saída, sem `rowspan` reconstruído entre elas (o
+   achatamento de spans da rodada 5, TAREFA-8, já opera só dentro de uma
+   tabela, não entre duas serializações separadas).
+2. **Estrutura de cabeçalhos** — o `DoclingDocument` de cada faixa começa
+   sua própria árvore de seções; um capítulo que começa numa faixa e
+   termina na seguinte perde a relação pai-filho entre o título e o
+   conteúdo que ficou do outro lado do corte.
+3. **Grau de confiança por faixa, não por documento** (rodada 5, TAREFA-3)
+   — juntar N faixas dá N `ConfidenceReport`s independentes; agregar num
+   único `grau_medio` para o documento final exigiria lógica nova (média
+   ponderada por páginas, por exemplo), hoje inexistente.
+4. **Numeração de página** — já resolvida (rodada 5, TAREFA-1): cada faixa
+   sabe seu próprio deslocamento (offset) de página real, então concatenar
+   os marcadores `<!-- página N -->` de cada faixa com o offset correto
+   preserva a numeração real do documento original.
+
+**Como concatenar sem duplicar ou perder conteúdo na emenda:** desde que os
+`page_range` de cada faixa sejam contíguos e não sobrepostos (ex.: 1-50,
+51-100, sem repetir a página 50 ou 51 em duas faixas), a concatenação
+simples dos `.md` de cada faixa, em ordem, não duplica nem perde conteúdo —
+o Docling processa cada `page_range` de forma independente e completa, sem
+depender de contexto de páginas fora da faixa. O risco fica todo nos itens
+1-3 acima (estrutura perdida na fronteira), não em duplicação/perda de
+texto.
+
+**Decisão:** não implementado. O teste real mostrou o oposto do esperado
+sem o paliativo da TAREFA-5 — particionar não limita o pico, piora,
+porque herda o crescimento entre jobs. Combinado com `malloc_trim` a
+hipótese original volta a fazer sentido, mas isso não foi medido; e mesmo
+se o pico melhorar, a estrutura perdida nas fronteiras (itens 1-3 acima)
+é um custo de qualidade que teria que ser aceito ou resolvido à parte.
+Fica para uma rodada futura, com o teste refeito na ordem certa
+(`malloc_trim` já ativo).
