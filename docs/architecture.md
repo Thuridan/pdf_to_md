@@ -599,3 +599,88 @@ se o pico melhorar, a estrutura perdida nas fronteiras (itens 1-3 acima)
 é um custo de qualidade que teria que ser aceito ou resolvido à parte.
 Fica para uma rodada futura, com o teste refeito na ordem certa
 (`malloc_trim` já ativo).
+
+### Processo por job (avaliado, rodada 6, TAREFA-8)
+
+**Registro consolidado, com os dados desta rodada — não recomenda nem
+descarta a migração.** Processo por job resolveria três problemas de uma
+vez: memória devolvida ao sistema incondicionalmente no `exit` (sem
+depender de nenhum código lembrar de chamar `malloc_trim` no lugar certo),
+viabilidade de um botão de parar (mata-se um processo com `SIGKILL`; não
+se interrompe de forma limpa uma thread Python no meio de uma chamada C do
+Docling/onnxruntime), e paralelismo real (múltiplos processos usam
+múltiplos núcleos de verdade; hoje o `motor_pool` é uma única instância
+compartilhada, processando um job de cada vez). É o refactor mais provável
+das próximas rodadas — mas a decisão de fazer ou não precisa ser
+sustentada por dado, não pela motivação original que a rodada 5 já
+corrigiu (ver abaixo).
+
+**1. Custo de um worker em regime vs. em pico.** Um `DocumentConverter`
+carregado custa 1,4-1,9 GB (rodada 3, TAREFA-4) — isso é regime, o custo
+fixo de manter os modelos na memória. As dezenas de GB medidas em toda
+conversão real (17-48 GB, dependendo de conteúdo e modo de OCR) **não são
+carga de modelo — são processamento de página em andamento** (corrigido
+na rodada 5, TAREFA-7, que também mostrou que `SHARE_MODELS` do
+`docling-serve` só deduplica a parte de regime, não resolve o pico).
+Processo por job não muda essa proporção: cada processo ainda paga o
+mesmo pico de processamento que o processo compartilhado paga hoje — a
+diferença é só *quando* essa memória é devolvida ao sistema.
+
+**2. O patamar cresce entre jobs? Quanto os paliativos do Bloco B
+reduziram?** Sim, cresce, no processo compartilhado de hoje: sem
+paliativo, o patamar pós-job subiu de 12,4 para 32,3 GB em 4 jobs sem OCR,
+e de 12,2 para 29,4 GB em 4 jobs com OCR (TAREFA-2). Com `malloc_trim`
+(TAREFA-5), implementado nesta rodada, o mesmo patamar **para de crescer**
+— fica estável em ~1,5-1,6 GB nos quatro jobs. Isso é uma redução quase
+completa do problema que motivava considerar processo por job pela ótica
+"memória não devolvida" — **mas não elimina o pico durante um job
+pesado** (ainda 44-48 GB numa faixa de 46 páginas com OCR), que é
+independente de quantos jobs já rodaram antes.
+
+**3. Quantos workers cabem em 62 GiB, pelo PICO, não pela média.** O pico
+mais alto medido nesta rodada num único job (threads=4, o padrão) foi
+~44-48 GB (faixa de 46 páginas com OCR); uma faixa isolada de conteúdo
+pesado chegou a ultrapassar 51 GB e ainda subia quando foi interrompida
+manualmente — **o pico varia por conteúdo**, então o dimensionamento
+precisa de margem sobre o pior caso observado, não sobre a média das
+faixas mais leves (17-36 GB sem OCR). Com margem: **um único worker
+pesado já usa 70-80% dos 62 GiB da máquina** — dois workers processando
+documentos pesados **ao mesmo tempo** (92-96 GB) excederiam a RAM física
+seguramente, com ou sem processo por job. Processo por job não aumenta
+quantos workers pesados cabem simultaneamente nesta máquina; ele evita que
+o crescimento residual entre jobs *empurre* um worker de vida longa para
+esse teto ao longo do tempo — o mesmo que `malloc_trim` já faz, hoje, sem
+o custo operacional de gerenciar múltiplos processos.
+
+**4. O que processo por job resolve que paliativos não resolvem, e
+vice-versa.**
+
+- **Reclamação de memória:** paliativo (`malloc_trim`) já resolve na
+  prática, medido nesta rodada — mas depende de disciplina de código (a
+  chamada tem que estar no lugar certo, e um caminho de erro não coberto
+  poderia pular ela). Processo por job resolve de forma incondicional e
+  estrutural, garantida pelo SO no `exit()`, sem depender de nenhuma
+  chamada explícita.
+- **Botão de parar:** paliativo não resolve — não há como interromper
+  com segurança uma chamada C bloqueante em andamento (Docling/PyTorch/
+  onnxruntime) a partir de uma thread Python. Processo por job resolve
+  diretamente: `SIGKILL`/`SIGTERM` no processo.
+- **Paralelismo real:** paliativo não resolve — o `motor_pool` de hoje é
+  uma instância única, processando um job de cada vez, por desenho.
+  Processo por job resolve, mas com o limite físico do item 3: nesta
+  máquina, paralelismo real só ajuda para jobs LEVES (sem OCR, faixas
+  pequenas) processados em conjunto — para jobs pesados com OCR, a RAM
+  disponível já limita a ~1 job pesado por vez, com ou sem múltiplos
+  processos.
+- **Custo que processo por job adiciona:** complexidade operacional (IPC
+  entre processos, um `DocumentConverter` recarregado por processo —
+  1,4-1,9 GB de custo fixo por worker, não amortizado como hoje — e
+  gerência de ciclo de vida de múltiplos processos), tudo ausente do
+  desenho atual de thread única + fila.
+
+**Decisão:** não tomada aqui, por instrução explícita. O material acima é
+para o usuário decidir: os paliativos do Bloco B já resolvem a maior parte
+do problema de memória que motivava processo por job (item 2), a um custo
+de implementação muito menor; o que sobra de motivação real é o botão de
+parar e paralelismo para jobs leves — nenhum dos dois foi pedido para esta
+rodada.
