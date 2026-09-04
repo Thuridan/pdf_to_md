@@ -244,6 +244,37 @@ diagrama denso) que a torna atipicamente cara. As faixas de 10 páginas
 usadas na tabela "Com OCR" acima foram escolhidas depois dessa observação,
 justamente para não repetir o mesmo risco.
 
+### `page_batch_size` explica o pico? (rodada 6, TAREFA-3)
+
+**Medição e registro — não implementado, sem ganho medido.** O Docling
+processa páginas em lotes de `page_batch_size` (padrão 4, em
+`settings.perf`), limpando `_image_cache` e descarregando o backend de
+página ao fim de cada lote. Hipótese: um lote menor reduziria o pico, por
+segurar menos páginas "em voo" ao mesmo tempo.
+
+**Método:** mesma faixa de 46 páginas com OCR (`teste.pdf`, 50-95, a mesma
+usada nas rodadas 3-5 e na TAREFA-1 desta rodada), `page_batch_size` em 1, 4
+(padrão) e 8, medindo tempo total e pico de RSS via `/usr/bin/time -v`.
+
+| `page_batch_size` | Tempo total | Pico de RSS |
+|---|---|---|
+| 1 | 156,8 s | 44,76 GB |
+| 4 (padrão) | 156,6 s | 46,61 GB |
+| 8 | 165,8 s | 48,43 GB |
+
+**Sem efeito prático em nenhuma das duas métricas.** A variação entre os
+três (156-166s, 44,8-48,4 GB) é da ordem do ruído de execução esperado em
+conteúdo real (a própria série de jobs da TAREFA-2 mostra variação
+comparável entre documentos diferentes de tamanho igual) — não uma
+tendência monotônica que acompanhe o tamanho do lote. Isso confirma a
+hipótese alternativa do prompt: **o pico não é dominado pelo tamanho do
+lote**, é dominado por outra coisa (a TAREFA-2 aponta para acumulação de
+estado entre conversões, não só custo por lote dentro de uma conversão).
+
+**Decisão:** `page_batch_size` **não foi exposto** como opção de
+`Config`/CLI — a regra da rodada é só implementar o que a medição mostra
+ganho, e não houve ganho medido aqui.
+
 ## Persistência (ou a ausência dela)
 
 Não há banco de dados. O estado de um job é:
