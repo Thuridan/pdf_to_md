@@ -186,6 +186,64 @@ que aparece cedo, não por um crescimento pequeno e previsível por página —
 qualquer dimensionamento de paralelismo baseado em "X MB por página" seria
 otimista demais com os números desta tabela.
 
+### O patamar cresce a cada job no mesmo processo? (rodada 6, TAREFA-2)
+
+**A medição mais importante da rodada — decide o desenho de qualquer pool
+de processos futuro.** Sabia-se que o RSS fica em um patamar alto depois de
+um job e não volta ao nível anterior à conversão; não se sabia se esse
+patamar **estabiliza** (retenção de alocador — paliativo resolve) ou
+**cresce** a cada job (objeto vivo acumulando — paliativo não resolve).
+
+**Método:** pelo caminho do backend (`motor_pool.inicializar()` uma vez,
+depois `motor.converter()` reaproveitado — o caminho real do servidor de
+vida longa, não uma CLI nova por job), 4 documentos em sequência no mesmo
+processo, RSS amostrado por uma thread (`psutil`, a cada 0,2s), separado por
+modo de OCR.
+
+**Sem OCR** (4 faixas de 30 páginas, `teste.pdf`, cada uma cobrindo uma
+região diferente do documento):
+
+| Job | RSS antes | RSS no pico | RSS depois |
+|---|---|---|---|
+| 1 | 17 MB | 16.551 MB | 12.363 MB |
+| 2 | 12.363 MB | 27.395 MB | 21.188 MB |
+| 3 | 21.188 MB | 32.614 MB | 27.575 MB |
+| 4 | 27.575 MB | 35.974 MB | 32.280 MB |
+
+**Com OCR** (4 faixas de 10 páginas — reduzidas de 30 para 10 nesta rodada
+depois que uma faixa de 30 páginas com OCR passou de 51 GB e continuava
+subindo quando foi abortada manualmente por segurança, ver ressalva
+abaixo):
+
+| Job | RSS antes | RSS no pico | RSS depois |
+|---|---|---|---|
+| 1 | 17 MB | 20.393 MB | 12.175 MB |
+| 2 | 12.175 MB | 26.345 MB | 21.077 MB |
+| 3 | 21.077 MB | 32.213 MB | 25.422 MB |
+| 4 | 25.422 MB | 38.105 MB | 29.417 MB |
+
+**Resultado: o patamar CRESCE a cada job, nos dois modos.** Não estabiliza
+em 3-4 jobs — o "depois" de cada job fica sistematicamente mais alto que o
+"depois" do job anterior (crescimento de +9-10 GB no primeiro salto,
+diminuindo mas não zerando nos seguintes — ~+4 a +5 GB do job 3 para o 4).
+Isso aponta para acumulação de objeto vivo entre conversões (algum cache do
+Docling, ou referências seguradas por module-level state), não só
+retenção de alocador — a hipótese que motivou o Bloco B (TAREFA-5) a testar
+paliativos, e o motivo pelo qual eles reduzem mas **não eliminam** o
+crescimento (ver TAREFA-5, abaixo).
+
+**Ressalva de segurança, registrada:** durante a calibração, uma faixa de
+30 páginas com OCR de uma região específica do documento (páginas 150-179)
+sozinha ultrapassou 51 GB de RSS e continuava subindo quando foi
+interrompida manualmente (`kill -9`) para proteger a máquina de 62 GiB —
+bem acima do patamar de ~44 GB já registrado na rodada 4 para 46 páginas.
+Essa é mais uma confirmação de que **o pico é dominado por conteúdo, não
+por contagem de páginas** (já registrado na rodada 3): essa faixa específica
+tem algo (provavelmente uma imagem de página inteira em alta resolução ou
+diagrama denso) que a torna atipicamente cara. As faixas de 10 páginas
+usadas na tabela "Com OCR" acima foram escolhidas depois dessa observação,
+justamente para não repetir o mesmo risco.
+
 ## Persistência (ou a ausência dela)
 
 Não há banco de dados. O estado de um job é:
