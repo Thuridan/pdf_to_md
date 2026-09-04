@@ -324,7 +324,63 @@ conscientemente. O padrão do processo compartilhado (motor_pool/backend)
 não muda, porque ele é quem sofre o crescimento entre jobs medido na
 TAREFA-2.
 
-## Persistência (ou a ausência dela)
+### `MALLOC_ARENA_MAX` e `malloc_trim` (rodada 6, TAREFA-5)
+
+Dois paliativos de alocador contra a memória que não volta ao patamar
+anterior depois de um job (TAREFA-2), testados sobre a mesma sequência de
+4 documentos sem OCR daquela medição, comparando o patamar pós-job.
+
+**(a) `MALLOC_ARENA_MAX=2` — medido e DESCARTADO.** A hipótese era reduzir
+a fragmentação: por padrão a glibc cria uma arena de malloc por thread (até
+um teto), e memória livre numa arena só volta ao kernel quando a arena
+inteira esvazia — menos arenas, mais chance de esvaziar por completo.
+Testado via `aplicar_ambiente()`. **Efeito colateral severo:** o mesmo job
+1 da sequência de teste (30 páginas, sem OCR), que levava ~81s sem o
+limite, **ainda não tinha terminado depois de 4 minutos** com
+`MALLOC_ARENA_MAX=2` — mais de 3× mais lento, e subindo. A causa mais
+provável é contenção de lock: com só 2 arenas servindo várias threads
+concorrentes (mesmo com `threads=4`), threads competem pelo mesmo lock de
+alocação em vez de cada uma ter sua própria arena — o custo de
+serialização supera de longe qualquer economia de RSS. **Não
+implementado** — revertido antes de virar padrão. Registrado como
+divergência da expectativa do prompt: o paliativo "barato" mediu como caro
+demais nesta carga de trabalho (múltiplas threads em C++/onnxruntime
+concorrendo por poucas arenas), não pela contra-indicação já conhecida
+(interação com `threads` alto) mas por um efeito colateral direto mesmo no
+`threads=4` já escolhido como padrão na TAREFA-4.
+
+**(b) `malloc_trim(0)` ao fim de cada job — medido e IMPLEMENTADO.** Chamada
+via `ctypes.CDLL("libc.so.6").malloc_trim(0)` ao fim de `_processar()` em
+`backend/src/services/jobs.py` (sucesso ou erro), pedindo ao glibc que
+devolva ao kernel a memória livre nas arenas. Guardado contra plataforma
+sem glibc (`ctypes.CDLL` falha em musl/macOS) e contra a lib carregada não
+ter o símbolo — nenhum dos dois derruba o worker.
+
+Medido sobre a mesma sequência de 4 documentos sem OCR da TAREFA-2 (sem
+`MALLOC_ARENA_MAX`, já descartado acima):
+
+| Job | RSS depois, sem paliativo (TAREFA-2) | RSS depois, com `malloc_trim` | Tempo, com `malloc_trim` |
+|---|---|---|---|
+| 1 | 12.363 MB | **1.481 MB** | 81,0 s |
+| 2 | 21.188 MB | **1.597 MB** | 70,6 s |
+| 3 | 27.575 MB | **1.544 MB** | 70,3 s |
+| 4 | 32.280 MB | **1.595 MB** | 70,1 s |
+
+**Efeito completo, sem custo de tempo mensurável** (70-81s nos dois casos,
+dentro do ruído normal de execução). O patamar pós-job para de crescer —
+fica estável em ~1,5-1,6 GB nos quatro jobs, em vez de subir continuamente
+até 32 GB. Isso **resolve na prática** a acumulação encontrada na TAREFA-2:
+a maior parte do RSS retido entre jobs não era objeto vivo do Docling, era
+memória livre presa em arenas de malloc que o glibc nunca devolvia ao
+kernel sem essa chamada explícita. **Implementado.**
+
+**Interação com `threads` (TAREFA-4):** não aplicável — a TAREFA-4 manteve
+o padrão em 4 (não subiu para 32/64), então não há "threads mais alto
+escolhido" para checar interação. Com `MALLOC_ARENA_MAX` já descartado por
+conta própria (item a), a combinação "os dois juntos" não foi testada:
+juntar um paliativo que funciona (`malloc_trim`) com um que regride
+severamente o tempo (`MALLOC_ARENA_MAX=2`) não teria utilidade prática —
+o resultado herdaria a regressão de tempo do segundo.
 
 Não há banco de dados. O estado de um job é:
 

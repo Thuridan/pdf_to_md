@@ -11,6 +11,7 @@ import sys
 import tempfile
 import time
 import unittest
+from unittest import mock
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -305,6 +306,47 @@ class TestFilaProcessamentoErro(_ComMotorStub):
             self.assertTrue(_aguardar(lambda: job.status == "erro"))
             self.assertIn("falha proposital do stub", job.mensagem_erro)
             self.assertIsNone(job.caminho_saida)
+
+
+class TestMallocTrimAoFimDoJob(_ComMotorStub):
+    """Rodada 6, TAREFA-5: _tentar_malloc_trim() roda ao fim de CADA job,
+    sucesso ou erro - e o momento em que o patamar de RSS pos-conversao se
+    estabelece (ver medicao em docs/architecture.md)."""
+
+    def test_chamado_apos_job_concluido(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(jobs, "_tentar_malloc_trim") as trim:
+            job = _escrever_e_criar_job("a.pdf", b"%PDF-1.4", diretorio=Path(tmp))
+            jobs.enfileirar(job.id)
+            self.assertTrue(_aguardar(lambda: job.status == "concluido"))
+            trim.assert_called_once()
+
+
+class TestMallocTrimAoFimDoJobComErro(_ComMotorStub):
+    falha = True
+
+    def test_chamado_mesmo_com_falha_de_conversao(self):
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(jobs, "_tentar_malloc_trim") as trim:
+            job = _escrever_e_criar_job("ruim.pdf", b"%PDF-1.4", diretorio=Path(tmp))
+            jobs.enfileirar(job.id)
+            self.assertTrue(_aguardar(lambda: job.status == "erro"))
+            trim.assert_called_once()
+
+
+class TestTentarMallocTrim(unittest.TestCase):
+    """_tentar_malloc_trim() nao pode derrubar o worker se a plataforma nao
+    tiver glibc (ctypes.CDLL falha em musl/macOS) ou se o simbolo nao
+    existir na lib carregada."""
+
+    def test_sem_libc_e_no_op(self):
+        with mock.patch.object(jobs, "_libc", None):
+            jobs._tentar_malloc_trim()  # nao deve levantar
+
+    def test_sem_simbolo_malloc_trim_e_no_op(self):
+        fake_libc = mock.Mock(spec=[])  # sem atributo malloc_trim
+        with mock.patch.object(jobs, "_libc", fake_libc):
+            jobs._tentar_malloc_trim()  # nao deve levantar
 
 
 class TestProcessarResultadoPulado(unittest.TestCase):

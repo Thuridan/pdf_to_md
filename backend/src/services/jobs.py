@@ -11,6 +11,7 @@ gargalo real e a instancia de modelo compartilhada, nao "quantos jobs cabem"
 
 from __future__ import annotations
 
+import ctypes
 import logging
 import queue
 import threading
@@ -30,6 +31,25 @@ LOG = logging.getLogger(__name__)
 
 _SENTINEL = object()
 _parar_evento = threading.Event()
+
+# Rodada 6, TAREFA-5: pede ao glibc, ao fim de cada job, que devolva ao
+# kernel a memoria livre retida nas arenas de malloc - carregado uma unica
+# vez no import, nao a cada chamada. So existe em sistemas com glibc
+# (CDLL("libc.so.6") falha em musl/macOS) - nesse caso _libc fica None e
+# _tentar_malloc_trim() vira no-op, sem derrubar o worker.
+try:
+    _libc = ctypes.CDLL("libc.so.6")
+except OSError:
+    _libc = None
+
+
+def _tentar_malloc_trim() -> None:
+    if _libc is None:
+        return
+    try:
+        _libc.malloc_trim(0)
+    except AttributeError:
+        pass
 
 # Estimativa de progresso: o Docling nao expoe callback nativo por pagina, entao
 # "pagina atual" e uma projecao por tempo decorrido (elapsed / segundos_por_pagina).
@@ -450,6 +470,13 @@ def _processar(job_id: str) -> None:
     else:
         job.status = "erro"
         job.mensagem_erro = resultado.mensagem
+
+    # Rodada 6, TAREFA-5: fim do job, sucesso ou erro - o momento exato em
+    # que o patamar de RSS pos-conversao se estabelece (ver medicao em
+    # docs/architecture.md). Sem isso o glibc so devolve memoria livre ao
+    # kernel quando uma arena inteira esvazia sozinha, o que na pratica
+    # nunca acontece num worker de vida longa que so acumula jobs.
+    _tentar_malloc_trim()
 
 
 def _marcar_erro(job_id: str, mensagem: str) -> None:

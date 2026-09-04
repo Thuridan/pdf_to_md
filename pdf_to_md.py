@@ -86,6 +86,13 @@ def aplicar_ambiente(cfg: Config) -> None:
         os.environ[var] = n
     os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
 
+    # Rodada 6, TAREFA-5: MALLOC_ARENA_MAX=2 foi medido e DESCARTADO -
+    # ver docs/architecture.md. Reduz o patamar de RSS pos-job, mas a um
+    # custo de tempo severo (contencao de lock com poucas arenas
+    # servindo varias threads concorrentes): o mesmo job que levava ~81s
+    # sem o limite ainda nao tinha terminado apos 4 minutos com ele. Nao
+    # aplicado.
+
     if cfg.offline:
         # Impede o Hugging Face Hub de checar atualizacoes de modelos.
         os.environ["HF_HUB_OFFLINE"] = "1"
